@@ -1,0 +1,60 @@
+diff --git a/Makefile.am b/Makefile.am
+index 762acc2..f217a17 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -2,8 +2,8 @@ MAINTAINERCLEANFILES = Makefile.in aclocal.m4 configure config.h.in config.h.in~
+ 
+ ACLOCAL_AMFLAGS = -I m4
+ 
+-SUBDIRS = contrib src
++SUBDIRS = src
+ 
+-#dist_man_MANS = man/dynomite.8
++dist_man_MANS = man/dynomite.8
+ 
+ EXTRA_DIST = README.md NOTICE LICENSE ChangeLog conf scripts notes
+diff --git a/configure.ac b/configure.ac
+index cacb056..fc06ccf 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -198,15 +198,8 @@ AS_IF([test "x$disable_stats" = xyes],
+   [AC_DEFINE([HAVE_STATS], [1], [Define to 1 if stats is not disabled])])
+ AC_MSG_RESULT($disable_stats)
+ 
+-# Untar the yaml-0.1.4 in contrib/ before config.status is rerun
+-AC_CONFIG_COMMANDS_PRE([tar xvfz contrib/yaml-0.1.4.tar.gz -C contrib])
+-
+-# Call yaml-0.1.4 ./configure recursively
+-AC_CONFIG_SUBDIRS([contrib/yaml-0.1.4])
+-
+ # Define Makefiles
+ AC_CONFIG_FILES([Makefile
+-                 contrib/Makefile
+                  src/Makefile
+                  src/hashkit/Makefile
+                  src/proto/Makefile
+diff --git a/src/Makefile.am b/src/Makefile.am
+index dd90b9d..ba9fc4e 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -8,7 +8,6 @@ AM_CPPFLAGS += -I $(top_srcdir)/src/hashkit
+ AM_CPPFLAGS += -I $(top_srcdir)/src/proto
+ AM_CPPFLAGS += -I $(top_srcdir)/src/event
+ AM_CPPFLAGS += -I $(top_srcdir)/src/seedsprovider
+-AM_CPPFLAGS += -I $(top_srcdir)/contrib/yaml-0.1.4/include
+ 
+ AM_CFLAGS =
+ AM_CFLAGS += -Wall -Wshadow
+@@ -20,6 +19,7 @@ AM_CFLAGS += -Wconversion -Wsign-compare
+ AM_CFLAGS += -Wstrict-prototypes -Wmissing-prototypes -Wredundant-decls -Wmissing-declarations
+ 
+ AM_LDFLAGS =
++AM_LDFLAGS += -lyaml
+ AM_LDFLAGS += -lm -lpthread -rdynamic
+ AM_LDFLAGS += -lssl -lcrypto
+ 
+@@ -71,4 +71,3 @@ dynomite_LDADD = $(top_builddir)/src/hashkit/libhashkit.a
+ dynomite_LDADD += $(top_builddir)/src/proto/libproto.a
+ dynomite_LDADD += $(top_builddir)/src/event/libevent.a
+ dynomite_LDADD +=  $(top_builddir)/src/seedsprovider/libseedsprovider.a
+-dynomite_LDADD += $(top_builddir)/contrib/yaml-0.1.4/src/.libs/libyaml.a

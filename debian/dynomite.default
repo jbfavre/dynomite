@@ -1,0 +1,4 @@
+## Defaults file for dynomite initscript
+## sourced by /etc/init.d/dynomite
+## installed at /etc/default/dynomite by the maintainer scripts
+

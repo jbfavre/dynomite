@@ -1,0 +1,29 @@
+#!/usr/bin/make -f
+
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DPKG_EXPORT_BUILDFLAGS = 1
+
+configure_flags = $(shell dpkg-buildflags --export=configure)
+
+%:
+	dh $@ --with autoreconf
+
+override_dh_auto_configure:
+	dh_auto_configure -- $(configure_flags)
+
+override_dh_strip:
+	dh_strip --dbg-package=dynomite-dbg
+
+override_dh_clean:
+	dh_clean
+	rm -f aclocal.m4
+	rm -f config.h.in
+	rm -rf config/
+	rm -f configure
+	rm -f contrib/Makefile.in
+	rm -f src/Makefile.in
+	rm -f src/event/Makefile.in
+	rm -f src/hashkit/Makefile.in
+	rm -f src/proto/Makefile.in
+	rm -f src/seedsprovider/Makefile.in
