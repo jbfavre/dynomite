@@ -1,0 +1,7 @@
+## Defaults file for dynomite initscript
+## sourced by /etc/init.d/dynomite
+## installed at /etc/default/dynomite by the maintainer scripts
+
+# Change this value to increase File Descriptors value.
+# Will be sourced and applied for within init script
+#MAX_FDS=65535

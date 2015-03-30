@@ -1,0 +1,6 @@
+dynomite (0.4.0-1~bbc78+1) stable; urgency=medium
+
+  * Fix build dependencies
+  * Initial package release.
+
+ -- Jean Baptiste Favre <debian@jbfavre.org>  Mon, 23 Feb 2015 15:03:39 +0100

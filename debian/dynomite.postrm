@@ -1,0 +1,13 @@
+#!/bin/sh
+
+set -e
+
+if [ "$1" = "purge" ]
+then
+        rm -rf /var/log/dynomite
+        rm -rf /var/run/dynomite
+fi
+
+#DEBHELPER#
+
+exit 0

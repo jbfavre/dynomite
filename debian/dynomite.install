@@ -1,0 +1,3 @@
+debian/dynomite.yml /etc/dynomite/
+conf/dynomite.pem /etc/dynomite/
+usr/sbin/dynomite

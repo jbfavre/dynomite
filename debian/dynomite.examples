@@ -1,0 +1,9 @@
+conf/dynomite.yml
+conf/mc_single.yml
+conf/redis_dc1.yml
+conf/redis_dc2.yml
+conf/redis_node1.yml
+conf/redis_node2.yml
+conf/redis_rack1_node.yml
+conf/redis_rack2_node.yml
+conf/redis_single.yml

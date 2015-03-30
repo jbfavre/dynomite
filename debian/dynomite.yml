@@ -1,0 +1,95 @@
+dyn_o_mite: # Server pool name
+
+  # Dynomite
+  # ========
+
+  # The listening address and port (name:port or ip:port) for this server pool.
+  listen: 0.0.0.0:8102
+
+  # The port that dynomite nodes are using to inter-communicate and gossip.
+  dyn_listen: 0.0.0.0:8101
+
+  # A seed provider implementation to provide a list of seed nodes
+  dyn_seed_provider: simple_provider
+
+  # The sleeping time in milliseconds at the end of a gossip round.
+  # gos_interval: 
+
+  # A list of seed nodes in the format: address:port:rack:dc:tokens (node that vnode is not supported yet)
+  # dyn_seeds: 
+
+  # Node Location
+  # =============
+  # Specify environment of a node
+  # Possible values:
+  # - aws
+  # - network (for physical datacenter)
+  # Default: None
+  env: network
+
+  # The name of the datacenter. Please refer to architecture document.
+  datacenter: dc1
+
+  # The name of the rack. Please refer to architecture document.
+  rack: rc1
+
+  # Node Info
+  # =========
+
+  # A boolean value that controls if a server pool speaks redis or memcached protocol
+  # Possible values:
+  # - true
+  # - false
+  # Defaults: false
+  redis: true
+
+  # The token(s) owned by a node. Currently, we don't support vnode yet so this only works with one token for the time being.
+  tokens: 0
+
+  # A boolean value that controls if server should be ejected temporarily when it fails consecutively server_failure_limit times
+  # Possible values:
+  # - true
+  # - false
+  # Default:
+  # auto_eject_hosts: false
+
+  # The timeout value in msec to wait for before retrying on a temporarily ejected server, when auto_eject_host is set to true.
+  # Default:
+  # server_retry_timeout: 30000
+
+  # The number of conseutive failures on a server that would leads to it being temporarily ejected when auto_eject_host is set to true.
+  # Default:
+  # server_failure_limit: 2
+
+  # The timeout value in msec that we wait for to establish a connection to the server or receive a response from a server. By default, we wait indefinitely.
+  # timeout:
+
+  # A boolean value that controls if dynomite should preconnect to all the servers in this pool on process start. Defaults to false.
+  # preconnect: 
+
+  # The maximum number of connections that can be opened to each server.
+  # Default:
+  # server_connections: 1
+
+  # A list of local server address, port and weight. Usually there is just one.
+  # Possible values:
+  # - name:port:weight
+  # - ip:port:weight
+  servers:
+  - 127.0.0.1:6379:1
+
+  # Security
+  # ========
+
+  # must be one of 'none' 'rack' 'datacenter' 'all'
+  # Possible values:
+  # - none
+  # - rack
+  # - datacenter
+  # - all
+  # Default:
+  secure_server_option: datacenter
+
+  # Which SSL certificate shall we use (required for startup)
+  pem_key_file: /etc/dynomite/dynomite.pem
+

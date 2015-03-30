@@ -1,0 +1,32 @@
+#! /bin/sh
+
+set -e
+
+USER="nobody"
+GROUP="nogroup"
+CONFFILE="/etc/dynomite/dynomite.yml"
+
+RUNDIR=/var/run/dynomite
+LOGDIR=/var/log/dynomite
+
+
+case "${1}" in
+    configure)
+        mkdir -p ${LOGDIR}
+        chown -R nobody:nogroup ${LOGDIR}
+        chmod 755 ${LOGDIR}
+        mkdir -p ${RUNDIR}
+        chown -R nobody:nogroup ${RUNDIR}
+        chmod 755 ${RUNDIR}
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "postinst called with unknown argument \`${1}'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
