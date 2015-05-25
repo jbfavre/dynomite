@@ -70,6 +70,10 @@ test_config() {
     fi
 }
 start() {
+    mkdir -p $RUNDIR
+    touch $PIDFILE
+    chown redis:redis $RUNDIR $PIDFILE
+    chmod 755 $RUNDIR
     # Check if the MAX_FDS limit is set in /etc/default/dynomite
     if [ -n "${MAX_FDS}" ]; then
         # Set the MAX_FDS limit
