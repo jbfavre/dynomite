@@ -79,9 +79,9 @@ static struct command conf_commands[] = {
       conf_set_num,
       offsetof(struct conf_pool, client_connections) },
 
-    { string("redis"),
-      conf_set_bool,
-      offsetof(struct conf_pool, redis) },
+    { string("data_store"),
+      conf_set_num,
+      offsetof(struct conf_pool, data_store) },
 
     { string("preconnect"),
       conf_set_bool,
@@ -166,6 +166,14 @@ static struct command conf_commands[] = {
     { string("conn_msg_rate"),
       conf_set_num,
       offsetof(struct conf_pool, conn_msg_rate)},
+
+    { string("read_consistency"),
+      conf_set_string,
+      offsetof(struct conf_pool, read_consistency) },
+
+    { string("write_consistency"),
+      conf_set_string,
+      offsetof(struct conf_pool, write_consistency) },
 
     null_command
 };
@@ -266,7 +274,7 @@ conf_seed_each_transform(void *elem, void *data)
     s->owner = NULL;
     s->pname = cseed->pname;
 
-    s->state = UNKNOWN;
+    s->state = NORMAL;//assume peers are normal initially
 
     uint8_t *p = cseed->name.data + cseed->name.len - 1;
     uint8_t *start = cseed->name.data;
@@ -328,7 +336,7 @@ conf_pool_init(struct conf_pool *cp, struct string *name)
 
     cp->client_connections = CONF_UNSET_NUM;
 
-    cp->redis = CONF_UNSET_NUM;
+    cp->data_store = CONF_UNSET_NUM;
     cp->preconnect = CONF_UNSET_NUM;
     cp->auto_eject_hosts = CONF_UNSET_NUM;
     cp->server_connections = CONF_UNSET_NUM;
@@ -340,6 +348,8 @@ conf_pool_init(struct conf_pool *cp, struct string *name)
     string_init(&cp->dyn_listen.pname);
     string_init(&cp->dyn_listen.name);
     string_init(&cp->secure_server_option);
+    string_init(&cp->read_consistency);
+    string_init(&cp->write_consistency);
     string_init(&cp->pem_key_file);
     string_init(&cp->dc);
     string_init(&cp->env);
@@ -413,6 +423,8 @@ conf_pool_deinit(struct conf_pool *cp)
     string_deinit(&cp->dyn_listen.pname);
     string_deinit(&cp->dyn_listen.name);
     string_deinit(&cp->secure_server_option);
+    string_deinit(&cp->read_consistency);
+    string_deinit(&cp->write_consistency);
     string_deinit(&cp->pem_key_file);
     string_deinit(&cp->dc);
     string_deinit(&cp->env);
@@ -466,7 +478,7 @@ conf_pool_each_transform(void *elem, void *data)
     sp->dist_type = cp->distribution;
     sp->hash_tag = cp->hash_tag;
 
-    sp->redis = cp->redis ? 1 : 0;
+    sp->data_store = cp->data_store;
     sp->timeout = cp->timeout;
     sp->backlog = cp->backlog;
 
@@ -544,7 +556,14 @@ conf_dump(struct conf *cf)
         log_debug(LOG_VVERB, "  distribution: %d", cp->distribution);
         log_debug(LOG_VVERB, "  client_connections: %d",
                   cp->client_connections);
-        log_debug(LOG_VVERB, "  redis: %d", cp->redis);
+        const char * temp_log = "unknown";
+        if(cp->data_store == DATA_REDIS){
+        	temp_log = "redis";
+        }
+        else if(cp->data_store == DATA_MEMCACHE){
+        	temp_log = "memcache";
+        }
+        log_debug(LOG_VVERB, "  data_store: %d (%s)", cp->data_store, temp_log);
         log_debug(LOG_VVERB, "  preconnect: %d", cp->preconnect);
         log_debug(LOG_VVERB, "  auto_eject_hosts: %d", cp->auto_eject_hosts);
         log_debug(LOG_VVERB, "  server_connections: %d",
@@ -586,6 +605,14 @@ conf_dump(struct conf *cf)
         log_debug(LOG_VVERB, "  secure_server_option: \"%.*s\"",
                               cp->secure_server_option.len,
                               cp->secure_server_option.data);
+
+        log_debug(LOG_VVERB, "  read_consistency: \"%.*s\"",
+                              cp->read_consistency.len,
+                              cp->read_consistency.data);
+
+        log_debug(LOG_VVERB, "  write_consistency: \"%.*s\"",
+                              cp->write_consistency.len,
+                              cp->write_consistency.data);
 
         log_debug(LOG_VVERB, "  dc: \"%.*s\"", cp->dc.len, cp->dc.data);
     }
@@ -691,7 +718,9 @@ conf_push_scalar(struct conf *cf)
 
     scalar = cf->event.data.scalar.value;
     scalar_len = (uint32_t)cf->event.data.scalar.length;
-
+    if (scalar_len == 0) {
+    	return DN_ERROR;
+    }
     log_debug(LOG_VVERB, "push '%.*s'", scalar_len, scalar);
 
     value = array_push(&cf->arg);
@@ -1466,8 +1495,8 @@ conf_validate_pool(struct conf *cf, struct conf_pool *cp)
 
     cp->client_connections = CONF_DEFAULT_CLIENT_CONNECTIONS;
 
-    if (cp->redis == CONF_UNSET_NUM) {
-        cp->redis = CONF_DEFAULT_REDIS;
+    if (cp->data_store == CONF_UNSET_NUM) {
+        cp->data_store = CONF_DEFAULT_DATASTORE;
     }
 
     if (cp->preconnect == CONF_UNSET_NUM) {
@@ -1533,12 +1562,44 @@ conf_validate_pool(struct conf *cf, struct conf_pool *cp)
                 CONF_DEFAULT_SECURE_SERVER_OPTION);
     }
 
+    if (string_empty(&cp->read_consistency)) {
+        string_copy_c(&cp->read_consistency,
+                &CONF_STR_DC_ONE);
+        log_debug(LOG_INFO, "setting read_consistency to default value:%s",
+                CONF_STR_DC_ONE);
+    }
+
+    if (string_empty(&cp->write_consistency)) {
+        string_copy_c(&cp->write_consistency,
+                &CONF_STR_DC_ONE);
+        log_debug(LOG_INFO, "setting write_consistency to default value:%s",
+                CONF_STR_DC_ONE);
+    }
+
     if (dn_strcmp(cp->secure_server_option.data, CONF_STR_NONE) &&
         dn_strcmp(cp->secure_server_option.data, CONF_STR_RACK) &&
         dn_strcmp(cp->secure_server_option.data, CONF_STR_DC) &&
         dn_strcmp(cp->secure_server_option.data, CONF_STR_ALL))
     {
         log_error("conf: directive \"secure_server_option:\"must be one of 'none' 'rack' 'datacenter' 'all'");
+    }
+
+    if (!dn_strcasecmp(cp->read_consistency.data, CONF_STR_DC_ONE))
+        g_read_consistency = DC_ONE;
+    else if (!dn_strcasecmp(cp->read_consistency.data, CONF_STR_DC_QUORUM))
+        g_read_consistency = DC_QUORUM;
+    else {
+        log_error("conf: directive \"read_consistency:\"must be one of 'DC_ONE' 'DC_QUORUM'");
+        return DN_ERROR;
+    }
+
+    if (!dn_strcasecmp(cp->write_consistency.data, CONF_STR_DC_ONE))
+        g_write_consistency = DC_ONE;
+    else if (!dn_strcasecmp(cp->write_consistency.data, CONF_STR_DC_QUORUM))
+        g_write_consistency = DC_QUORUM;
+    else {
+        log_error("conf: directive \"write_consistency:\"must be one of 'DC_ONE' 'DC_QUORUM'");
+        return DN_ERROR;
     }
 
     if (string_empty(&cp->env)) {
@@ -1710,6 +1771,7 @@ conf_create(char *filename)
     return cf;
 
 error:
+	log_stderr("dynomite: configuration file '%s' syntax is invalid", filename);
     fclose(cf->fh);
     cf->fh = NULL;
     conf_destroy(cf);
@@ -1954,6 +2016,7 @@ conf_add_server(struct conf *cf, struct command *cmd, void *conf)
     if (status != DN_OK) {
         return CONF_ERROR;
     }
+
 
     status = dn_resolve(&address, field->port, &field->info);
     if (status != DN_OK) {

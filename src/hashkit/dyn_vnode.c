@@ -60,11 +60,6 @@ vnode_update(struct server_pool *sp)
 {
     ASSERT(array_n(&sp->peers) > 0);
 
-    int64_t now = dn_usec_now();
-    if (now < 0) {
-        return DN_ERROR;
-    }
-
     int i, len;
     for (i = 0, len = array_n(&sp->peers); i < len; i++) {
         struct server *peer = array_get(&sp->peers, i);
@@ -130,13 +125,13 @@ vnode_update(struct server_pool *sp)
 uint32_t
 vnode_dispatch(struct continuum *continuum, uint32_t ncontinuum, struct dyn_token *token)
 {
-    struct continuum *begin, *end, *left, *right, *middle;
+    struct continuum *left, *right, *middle;
 
     ASSERT(continuum != NULL);
     ASSERT(ncontinuum != 0);
 
-    begin = left = continuum;
-    end = right = continuum + ncontinuum - 1;
+    left = continuum;
+    right = continuum + ncontinuum - 1;
 
     if (cmp_dyn_token(right->token, token) < 0 || cmp_dyn_token(left->token, token) >= 0)
         return left->index;

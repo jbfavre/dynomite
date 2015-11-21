@@ -49,10 +49,10 @@
 
 #define CONF_DEFAULT_HASH                    HASH_MURMUR
 #define CONF_DEFAULT_DIST                    DIST_VNODE
-#define CONF_DEFAULT_TIMEOUT                 10000
+#define CONF_DEFAULT_TIMEOUT                 500
 #define CONF_DEFAULT_LISTEN_BACKLOG          512
 #define CONF_DEFAULT_CLIENT_CONNECTIONS      0
-#define CONF_DEFAULT_REDIS                   false
+#define CONF_DEFAULT_DATASTORE				 0
 #define CONF_DEFAULT_PRECONNECT              true
 #define CONF_DEFAULT_AUTO_EJECT_HOSTS        true
 #define CONF_DEFAULT_SERVER_RETRY_TIMEOUT    10 * 1000      /* in msec */
@@ -74,6 +74,9 @@
 #define CONF_STR_DC                          "datacenter"
 #define CONF_STR_RACK                        "rack"
 #define CONF_STR_ALL                         "all"
+
+#define CONF_STR_DC_QUORUM                   "dc_quorum"
+#define CONF_STR_DC_ONE                      "dc_one"
 
 #define CONF_DEFAULT_ENV                     "aws"
 
@@ -117,7 +120,7 @@ struct conf_pool {
     int                timeout;               /* timeout: */
     int                backlog;               /* backlog: */
     int                client_connections;    /* client_connections: */
-    int                redis;                 /* redis: */
+    int                data_store;            /* data_store: */
     int                preconnect;            /* preconnect: */
     int                auto_eject_hosts;      /* auto_eject_hosts: */
     int                server_connections;    /* server_connections: */
@@ -138,6 +141,8 @@ struct conf_pool {
 
     /* none | datacenter | rack | all in order of increasing number of connections. (default is datacenter) */
     struct string      secure_server_option;
+    struct string      read_consistency;
+    struct string      write_consistency;
     struct string      pem_key_file;
     struct string      dc;                    /* this node's dc */
     struct string      env;                   /* aws, google, network, ... */

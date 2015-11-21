@@ -38,10 +38,10 @@
  *                 +         +          +
  *                 |         |          |
  *                 |       Proxy        |
- *                 |     dn_proxy.[ch]  |
+ *                 |     dyn_proxy.[ch]  |
  *                 /                    \
  *              Client                Server
- *           dn_client.[ch]         dn_server.[ch]
+ *           dyn_client.[ch]         dyn_server.[ch]
  *
  * Dynomite essentially multiplexes m client connections over n server
  * connections. Usually m >> n, so that dynomite can pipeline requests
@@ -95,6 +95,9 @@
 static uint32_t nfree_connq;       /* # free conn q */
 static struct conn_tqh free_connq; /* free conn q */
 
+consistency_t g_read_consistency = DEFAULT_READ_CONSISTENCY;
+consistency_t g_write_consistency = DEFAULT_WRITE_CONSISTENCY;
+
 /*
  * Return the context associated with this connection.
  */
@@ -103,14 +106,23 @@ conn_to_ctx(struct conn *conn)
 {
     struct server_pool *pool;
 
-    if (conn->proxy || conn->client || conn->dnode_server || conn->dnode_client) {
+    if ((conn->type == CONN_PROXY) ||
+        (conn->type == CONN_CLIENT) ||
+        (conn->type == CONN_DNODE_PEER_PROXY)||
+        (conn->type == CONN_DNODE_PEER_CLIENT)) {
         pool = conn->owner;
     } else {
         struct server *server = conn->owner;
-        pool = server->owner;
+        pool = server ? server->owner : NULL;
     }
 
-    return pool->ctx;
+    return pool ? pool->ctx : NULL;
+}
+
+static rstatus_t
+conn_cant_handle_response(struct conn *conn, msgid_t reqid, struct msg *resp)
+{
+    return DN_ENO_IMPL;
 }
 
 static struct conn *
@@ -129,6 +141,7 @@ _conn_get(void)
         if (conn == NULL) {
             return NULL;
         }
+        memset(conn, 0, sizeof(*conn));
     }
 
     conn->owner = NULL;
@@ -137,7 +150,11 @@ _conn_get(void)
     /* {family, addrlen, addr} are initialized in enqueue handler */
 
     TAILQ_INIT(&conn->imsg_q);
+    conn->imsg_count = 0;
+
     TAILQ_INIT(&conn->omsg_q);
+    conn->omsg_count = 0;
+
     conn->rmsg = NULL;
     conn->smsg = NULL;
 
@@ -157,17 +174,14 @@ _conn_get(void)
     conn->send_active = 0;
     conn->send_ready = 0;
 
-    conn->client = 0;
-    conn->proxy = 0;
     conn->connecting = 0;
     conn->connected = 0;
     conn->eof = 0;
     conn->done = 0;
-    conn->redis = 0;
+    conn->waiting_to_unref = 0;
+    conn->data_store = DATA_REDIS;
 
     /* for dynomite */
-    conn->dnode_client = 0;
-    conn->dnode_server = 0;
     conn->dyn_mode = 0;
     conn->dnode_secured = 0;
     conn->dnode_crypto_state = 0;
@@ -176,6 +190,12 @@ _conn_get(void)
     conn->avail_tokens = msgs_per_sec();
     conn->last_sent = 0;
     conn->last_received = 0;
+    conn->attempted_reconnect = 0;
+    conn->non_bytes_recv = 0;
+    //conn->non_bytes_send = 0;
+    conn_set_read_consistency(conn, g_read_consistency);
+    conn_set_write_consistency(conn, g_write_consistency);
+    conn->type = CONN_UNSPECIFIED;
 
     unsigned char *ase_key = generate_aes_key();
     strncpy(conn->aes_key, ase_key, strlen(ase_key)); //generate a new key for each connection
@@ -183,9 +203,76 @@ _conn_get(void)
     return conn;
 }
 
+inline void
+conn_set_read_consistency(struct conn *conn, consistency_t cons)
+{
+    conn->read_consistency = cons;
+}
+
+inline consistency_t
+conn_get_read_consistency(struct conn *conn)
+{
+    //return conn->read_consistency;
+    return g_read_consistency;
+}
+
+inline void
+conn_set_write_consistency(struct conn *conn, consistency_t cons)
+{
+    conn->write_consistency = cons;
+}
+
+inline consistency_t
+conn_get_write_consistency(struct conn *conn)
+{
+    //return conn->write_consistency;
+    return g_write_consistency;
+}
 
 struct conn *
-conn_get_peer(void *owner, bool client, bool redis)
+test_conn_get(void)
+{
+   return _conn_get();
+}
+
+struct conn_ops dnode_peer_client_ops = {
+    msg_recv,
+    dnode_req_recv_next,
+    dnode_req_recv_done,
+    msg_send,
+    dnode_rsp_send_next,
+    dnode_rsp_send_done,
+    dnode_client_close,
+    dnode_client_active,
+    dnode_client_ref,
+    dnode_client_unref,
+    NULL,
+    NULL,
+    dnode_req_client_enqueue_omsgq,
+    dnode_req_client_dequeue_omsgq,
+    dnode_client_handle_response 
+};
+
+struct conn_ops dnode_peer_server_ops = {
+    msg_recv,
+    dnode_rsp_recv_next,
+    dnode_rsp_recv_done,
+    msg_send,
+    dnode_req_send_next,
+    dnode_req_send_done,
+    dnode_peer_close,
+    dnode_peer_active,
+    dnode_peer_ref,
+    dnode_peer_unref,
+    dnode_req_peer_enqueue_imsgq,
+    dnode_req_peer_dequeue_imsgq,
+    dnode_req_peer_enqueue_omsgq,
+    dnode_req_peer_dequeue_omsgq,
+    conn_cant_handle_response
+};
+
+struct conn *
+conn_get_peer(void *owner, bool client, int data_store)
 {
     struct conn *conn;
 
@@ -194,69 +281,71 @@ conn_get_peer(void *owner, bool client, bool redis)
         return NULL;
     }
 
-    conn->redis = redis ? 1 : 0;
-    conn->dnode_client = client? 1 : 0;   
+    conn->data_store = data_store;
     conn->dyn_mode = 1;
 
-    if (conn->dnode_client) {
+    if (client) {
         /* incoming peer connection to dnode server
          * dyn client receives a request, possibly parsing it, and sends a
          * response downstream.
          */
-        conn->recv = msg_recv;
-        conn->recv_next = dnode_req_recv_next;
-        conn->recv_done = dnode_req_recv_done;
-
-        conn->send = msg_send;
-        conn->send_next = dnode_rsp_send_next;
-        conn->send_done = dnode_rsp_send_done;
-
-        conn->close = dnode_client_close;
-        conn->active = dnode_client_active;
-
-        conn->ref = dnode_client_ref;
-        conn->unref = dnode_client_unref;
-
-        conn->enqueue_inq = NULL;
-        conn->dequeue_inq = NULL;
-        conn->enqueue_outq = dnode_req_client_enqueue_omsgq;
-        conn->dequeue_outq = dnode_req_client_dequeue_omsgq;
+        conn->type = CONN_DNODE_PEER_CLIENT;
+        conn->ops = &dnode_peer_client_ops;
     } else {
         /*
          * outgoing peer connection
          * dyn server receives a response, possibly parsing it, and sends a
          * request upstream.
          */
-        conn->recv = msg_recv;
-        conn->recv_next = dnode_rsp_recv_next;
-        conn->recv_done = dnode_rsp_recv_done;
-
-        conn->send = msg_send;
-        conn->send_next = dnode_req_send_next;
-        conn->send_done = dnode_req_send_done;
-
-        conn->close = dnode_peer_close;
-        conn->active = dnode_peer_active;
-
-        conn->ref = dnode_peer_ref;
-        conn->unref = dnode_peer_unref;
- 
-        conn->enqueue_inq = dnode_req_peer_enqueue_imsgq;
-        conn->dequeue_inq = dnode_req_peer_dequeue_imsgq;
-        conn->enqueue_outq = dnode_req_peer_enqueue_omsgq;
-        conn->dequeue_outq = dnode_req_peer_dequeue_omsgq;
+        conn->type = CONN_DNODE_PEER_SERVER;
+        conn->ops = &dnode_peer_server_ops;
     }
 
-    conn->ref(conn, owner);
+    conn_ref(conn, owner);
 
-    log_debug(LOG_VVERB, "get dyn peer  conn %p client %d", conn, conn->dnode_client);
+    log_debug(LOG_VVERB, "get conn %p %s", conn, conn_get_type_string(conn));
 
     return conn;
 }
 
+struct conn_ops client_ops = {
+    msg_recv,
+    req_recv_next,
+    req_recv_done,
+    msg_send,
+    rsp_send_next,
+    rsp_send_done,
+    client_close,
+    client_active,
+    client_ref,
+    client_unref,
+    NULL,
+    NULL,
+    req_client_enqueue_omsgq,
+    req_client_dequeue_omsgq,
+    client_handle_response 
+};
+
+struct conn_ops server_ops = {
+    msg_recv,
+    rsp_recv_next,
+    server_rsp_recv_done,
+    msg_send,
+    req_send_next,
+    req_send_done,
+    server_close,
+    server_active,
+    server_ref,
+    server_unref,
+    req_server_enqueue_imsgq,
+    req_server_dequeue_imsgq,
+    req_server_enqueue_omsgq,
+    req_server_dequeue_omsgq,
+    conn_cant_handle_response
+};
 
 struct conn *
-conn_get(void *owner, bool client, bool redis)
+conn_get(void *owner, bool client, int data_store)
 {
     struct conn *conn;
 
@@ -265,67 +354,51 @@ conn_get(void *owner, bool client, bool redis)
         return NULL;
     }
 
-    /* connection either handles redis or memcache messages */
-    conn->redis = redis ? 1 : 0;
+    /* connection handles the data store messages (redis, memcached or other) */
+    conn->data_store = data_store;
 
-    conn->client = client ? 1 : 0;
     conn->dyn_mode = 0;
 
-    if (conn->client) {
+    if (client) {
         /*
          * client receives a request, possibly parsing it, and sends a
          * response downstream.
          */
-        conn->recv = msg_recv;
-        conn->recv_next = req_recv_next;
-        conn->recv_done = req_recv_done;
-
-        conn->send = msg_send;
-        conn->send_next = rsp_send_next;
-        conn->send_done = rsp_send_done;
-
-        conn->close = client_close;
-        conn->active = client_active;
-
-        conn->ref = client_ref;
-        conn->unref = client_unref;
-
-        conn->enqueue_inq = NULL;
-        conn->dequeue_inq = NULL;
-        conn->enqueue_outq = req_client_enqueue_omsgq;
-        conn->dequeue_outq = req_client_dequeue_omsgq;
+        conn->type = CONN_CLIENT;
+        conn->ops = &client_ops;
     } else {
         /*
          * server receives a response, possibly parsing it, and sends a
          * request upstream.
          */
-        conn->recv = msg_recv;
-        conn->recv_next = rsp_recv_next;
-        conn->recv_done = rsp_recv_done;
-
-        conn->send = msg_send;
-        conn->send_next = req_send_next;
-        conn->send_done = req_send_done;
-
-        conn->close = server_close;
-        conn->active = server_active;
-
-        conn->ref = server_ref;
-        conn->unref = server_unref;
-
-        conn->enqueue_inq = req_server_enqueue_imsgq;
-        conn->dequeue_inq = req_server_dequeue_imsgq;
-        conn->enqueue_outq = req_server_enqueue_omsgq;
-        conn->dequeue_outq = req_server_dequeue_omsgq;
+        conn->type = CONN_SERVER;
+        conn->ops = &server_ops;
     }
 
-    conn->ref(conn, owner);
+    conn_ref(conn, owner);
 
-    log_debug(LOG_VVERB, "get conn %p client %d", conn, conn->client);
+    log_debug(LOG_VVERB, "get conn %p %s", conn, conn_get_type_string(conn));
 
     return conn;
 }
 
+struct conn_ops dnode_server_ops = {
+    dnode_recv,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    dnode_close,
+    NULL,
+    dnode_ref,
+    dnode_unref,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    conn_cant_handle_response
+};
 
 struct conn *
 conn_get_dnode(void *owner)
@@ -338,37 +411,36 @@ conn_get_dnode(void *owner)
         return NULL;
     }
 
-    conn->redis = pool->redis;
+    conn->data_store = pool->data_store;
+    conn->type = CONN_DNODE_PEER_PROXY;
 
-    conn->dnode_server = 1;
     conn->dyn_mode = 1;
+    conn->ops = &dnode_server_ops;
+    conn_ref(conn, owner);
 
-    conn->recv = dnode_recv;
-    conn->recv_next = NULL;
-    conn->recv_done = NULL;
-
-    conn->send = NULL;
-    conn->send_next = NULL;
-    conn->send_done = NULL;
-
-    conn->close = dnode_close;
-    conn->active = NULL;
-
-    conn->ref = dnode_ref;
-    conn->unref = dnode_unref;
-
-    conn->enqueue_inq = NULL;
-    conn->dequeue_inq = NULL;
-    conn->enqueue_outq = NULL;
-    conn->dequeue_outq = NULL;
-
-    conn->ref(conn, owner);
-
-    log_debug(LOG_VVERB, "get conn %p dnode %d", conn, conn->proxy);
+    log_debug(LOG_VVERB, "get conn %p %s", conn, conn_get_type_string(conn));
 
     return conn;
 }
 
+struct conn_ops proxy_ops = {
+    proxy_recv,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    proxy_close,
+    NULL,
+    proxy_ref,
+    proxy_unref,
+    // enqueue, dequeues
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    conn_cant_handle_response
+};
 
 struct conn *
 conn_get_proxy(void *owner)
@@ -381,33 +453,15 @@ conn_get_proxy(void *owner)
         return NULL;
     }
 
-    conn->redis = pool->redis;
+    conn->type = CONN_PROXY;
+    conn->data_store = pool->data_store;
 
-    conn->proxy = 1;
     conn->dyn_mode = 0;
+    conn->ops = &proxy_ops;
 
-    conn->recv = proxy_recv;
-    conn->recv_next = NULL;
-    conn->recv_done = NULL;
+    conn_ref(conn, owner);
 
-    conn->send = NULL;
-    conn->send_next = NULL;
-    conn->send_done = NULL;
-
-    conn->close = proxy_close;
-    conn->active = NULL;
-
-    conn->ref = proxy_ref;
-    conn->unref = proxy_unref;
-
-    conn->enqueue_inq = NULL;
-    conn->dequeue_inq = NULL;
-    conn->enqueue_outq = NULL;
-    conn->dequeue_outq = NULL;
-
-    conn->ref(conn, owner);
-
-    log_debug(LOG_VVERB, "get conn %p proxy %d", conn, conn->proxy);
+    log_debug(LOG_VVERB, "get conn %p %s", conn, conn_get_type_string(conn));
 
     return conn;
 }
@@ -454,7 +508,7 @@ conn_deinit(void)
 }
 
 ssize_t
-conn_recv(struct conn *conn, void *buf, size_t size)
+conn_recv_data(struct conn *conn, void *buf, size_t size)
 {
     ssize_t n;
 
@@ -472,13 +526,15 @@ conn_recv(struct conn *conn, void *buf, size_t size)
                 conn->recv_ready = 0;
             }
             conn->recv_bytes += (size_t)n;
+            conn->non_bytes_recv = 0;
             return n;
         }
 
         if (n == 0) {
             conn->recv_ready = 0;
             conn->eof = 1;
-            log_debug(LOG_INFO, "recv on sd %d eof rb %zu sb %zu", conn->sd,
+            conn->non_bytes_recv++;
+            log_debug(LOG_NOTICE, "recv on sd %d eof rb %zu sb %zu", conn->sd,
                       conn->recv_bytes, conn->send_bytes);
             return n;
         }
@@ -504,7 +560,7 @@ conn_recv(struct conn *conn, void *buf, size_t size)
 }
 
 ssize_t
-conn_sendv(struct conn *conn, struct array *sendv, size_t nsend)
+conn_sendv_data(struct conn *conn, struct array *sendv, size_t nsend)
 {
     ssize_t n;
 
@@ -523,12 +579,17 @@ conn_sendv(struct conn *conn, struct array *sendv, size_t nsend)
                 conn->send_ready = 0;
             }
             conn->send_bytes += (size_t)n;
+            //conn->non_bytes_send = 0;
             return n;
         }
 
         if (n == 0) {
             log_warn("sendv on sd %d returned zero", conn->sd);
             conn->send_ready = 0;
+            //conn->non_bytes_send++;
+            //if (conn->dyn_mode && conn->non_bytes_send > MAX_CONN_ALLOWABLE_NON_SEND) {
+            //    conn->err = ENOTRECOVERABLE;
+            //}
             return 0;
         }
 
@@ -552,26 +613,19 @@ conn_sendv(struct conn *conn, struct array *sendv, size_t nsend)
     return DN_ERROR;
 }
 
-
-
-void conn_print(struct conn *conn) {
+void
+conn_print(struct conn *conn)
+{
 	log_debug(LOG_VERB, "sd %d", conn->sd);
-	log_debug(LOG_VERB, "redis %d", conn->redis);
-
-	log_debug(LOG_VERB, "client %d", conn->client);
-	log_debug(LOG_VERB, "proxy %d", conn->proxy);
+	log_debug(LOG_VERB, "data store %d", conn->data_store);
+	log_debug(LOG_VERB, "Type: %s", conn_get_type_string(conn));
 
 	log_debug(LOG_VERB, "dyn_mode %d", conn->dyn_mode);
-
-	log_debug(LOG_VERB, "dnode_client %d", conn->dnode_client);
-	log_debug(LOG_VERB, "dnode_server %d", conn->dnode_server);
-
 
 	log_debug(LOG_VERB, "dnode_crypto_state %d", conn->dnode_crypto_state);
 	log_debug(LOG_VERB, "dnode_secured %d", conn->dnode_secured);
 
 	log_debug(LOG_VERB, "connected %d", conn->connected);
-	log_debug(LOG_VERB, "dnode_client %d", conn->connecting);
 	log_debug(LOG_VERB, "done %d", conn->done);
 
 
@@ -587,3 +641,4 @@ void conn_print(struct conn *conn) {
 	log_debug(LOG_VERB, "eof %d", conn->eof);
 	log_debug(LOG_VERB, "err %d", conn->err);
 }
+

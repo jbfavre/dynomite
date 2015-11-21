@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <getopt.h>
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 
@@ -50,32 +51,40 @@
 #define DN_MBUF_MIN_SIZE    MBUF_MIN_SIZE
 #define DN_MBUF_MAX_SIZE    MBUF_MAX_SIZE
 
+#define DN_ALLOC_MSGS			ALLOC_MSGS
+#define DN_MIN_ALLOC_MSGS	MIN_ALLOC_MSGS
+#define DN_MAX_ALLOC_MSGS	MAX_ALLOC_MSGS
+
 static int show_help;
 static int show_version;
 static int test_conf;
+static int admin_opt = 0;
 static int daemonize;
 static int enable_gossip = 0;
 static int describe_stats;
 
 static struct option long_options[] = {
-    { "help",           no_argument,        NULL,   'h' },
-    { "version",        no_argument,        NULL,   'V' },
-    { "test-conf",      no_argument,        NULL,   't' },
-    { "daemonize",      no_argument,        NULL,   'd' },
-    { "describe-stats", no_argument,        NULL,   'D' },
-    { "gossip",         no_argument,        NULL,   'g' },
-    { "verbose",        required_argument,  NULL,   'v' },
-    { "output",         required_argument,  NULL,   'o' },
-    { "conf-file",      required_argument,  NULL,   'c' },
-    { "stats-port",     required_argument,  NULL,   's' },
-    { "stats-interval", required_argument,  NULL,   'i' },
-    { "stats-addr",     required_argument,  NULL,   'a' },
-    { "pid-file",       required_argument,  NULL,   'p' },
-    { "mbuf-size",      required_argument,  NULL,   'm' },
+    { "help",                 no_argument,        NULL,   'h' },
+    { "version",              no_argument,        NULL,   'V' },
+    { "test-conf",            no_argument,        NULL,   't' },
+    { "daemonize",            no_argument,        NULL,   'd' },
+    { "describe-stats",       no_argument,        NULL,   'D' },
+    { "gossip",               no_argument,        NULL,   'g' },
+    { "verbose",              required_argument,  NULL,   'v' },
+    { "output",               required_argument,  NULL,   'o' },
+    { "conf-file",            required_argument,  NULL,   'c' },
+    { "stats-port",           required_argument,  NULL,   's' },
+    { "stats-interval",       required_argument,  NULL,   'i' },
+    { "stats-addr",           required_argument,  NULL,   'a' },
+    { "pid-file",             required_argument,  NULL,   'p' },
+    { "mbuf-size",            required_argument,  NULL,   'm' },
+    { "max-msgs",             required_argument,  NULL,   'M' },
+    { "admin-operation",      required_argument,  NULL,   'x' },
+    { "admin-param",          required_argument,  NULL,   'y' },
     { NULL,             0,                  NULL,    0  }
 };
 
-static char short_options[] = "hVtdDgv:o:c:s:i:a:p:m:";
+static char short_options[] = "hVtdDgv:o:c:s:i:a:p:m:M:x:y";
 
 static rstatus_t
 dn_daemonize(int dump_core)
@@ -212,6 +221,7 @@ dn_show_usage(void)
         "Usage: dynomite [-?hVdDt] [-v verbosity level] [-o output file]" CRLF
         "                  [-c conf file] [-s stats port] [-a stats addr]" CRLF
         "                  [-i stats interval] [-p pid file] [-m mbuf size]" CRLF
+        "                  [-M max alloc messages]" CRLF
         "");
     log_stderr(
         "Options:" CRLF
@@ -222,21 +232,24 @@ dn_show_usage(void)
         "  -d, --daemonize        : run as a daemon" CRLF
         "  -D, --describe-stats   : print stats description and exit");
     log_stderr(
-        "  -v, --verbosity=N      : set logging level (default: %d, min: %d, max: %d)" CRLF
-        "  -o, --output=S         : set logging file (default: %s)" CRLF
-        "  -c, --conf-file=S      : set configuration file (default: %s)" CRLF
-        "  -s, --stats-port=N     : set stats monitoring port (default: %d)" CRLF
-        "  -a, --stats-addr=S     : set stats monitoring ip (default: %s)" CRLF
-        "  -i, --stats-interval=N : set stats aggregation interval in msec (default: %d msec)" CRLF
-        "  -p, --pid-file=S       : set pid file (default: %s)" CRLF
-        "  -m, --mbuf-size=N      : set size of mbuf chunk in bytes (default: %d bytes)" CRLF
+        "  -v, --verbosity=N            : set logging level (default: %d, min: %d, max: %d)" CRLF
+        "  -o, --output=S               : set logging file (default: %s)" CRLF
+        "  -c, --conf-file=S            : set configuration file (default: %s)" CRLF
+        "  -s, --stats-port=N           : set stats monitoring port (default: %d)" CRLF
+        "  -a, --stats-addr=S           : set stats monitoring ip (default: %s)" CRLF
+        "  -i, --stats-interval=N       : set stats aggregation interval in msec (default: %d msec)" CRLF
+        "  -p, --pid-file=S             : set pid file (default: %s)" CRLF
+        "  -m, --mbuf-size=N            : set size of mbuf chunk in bytes (default: %d bytes)" CRLF
+        "  -M, --max-msgs=N             : set max number of messages to allocate (default: %d)" CRLF
+        "  -x, --admin-operation=N      : set size of admin operation (default: %d)" CRLF
         "",
         DN_LOG_DEFAULT, DN_LOG_MIN, DN_LOG_MAX,
         DN_LOG_PATH != NULL ? DN_LOG_PATH : "stderr",
         DN_CONF_PATH,
         DN_STATS_PORT, DN_STATS_ADDR, DN_STATS_INTERVAL,
         DN_PID_FILE != NULL ? DN_PID_FILE : "off",
-        DN_MBUF_SIZE);
+        DN_MBUF_SIZE, DN_ALLOC_MSGS,
+        0);
 }
 
 static rstatus_t
@@ -415,9 +428,40 @@ dn_get_options(int argc, char **argv, struct instance *nci)
                 return DN_ERROR;
             }
 
+            if ((value / 16) * 16 != value) {
+               log_stderr("dynomite: mbuf chunk size must be a multiple of 16");
+               return DN_ERROR;
+            }
+
             nci->mbuf_chunk_size = (size_t)value;
             break;
 
+        case 'M':
+            value = dn_atoi(optarg, strlen(optarg));
+            if (value <= 0) {
+                log_stderr("dynomite: option -M requires a non-zero number");
+                return DN_ERROR;
+            }
+
+            if (value < DN_MIN_ALLOC_MSGS || value > DN_MAX_ALLOC_MSGS) {
+                log_stderr("dynomite: max allocated messages buffer must be between %zu and"
+                           " %zu messages", DN_MIN_ALLOC_MSGS, DN_MAX_ALLOC_MSGS);
+                return DN_ERROR;
+            }
+
+            nci->alloc_msgs_max = (size_t)value;
+
+        	break;
+
+        case 'x':
+            value = dn_atoi(optarg, strlen(optarg));
+            if (value <= 0) {
+               log_stderr("dynomite: option -x requires a non-zero number");
+               return DN_ERROR;
+            }
+            admin_opt = value;
+
+            break;
         case '?':
             switch (optopt) {
             case 'o':
@@ -428,6 +472,7 @@ dn_get_options(int argc, char **argv, struct instance *nci)
                 break;
 
             case 'm':
+            case 'M':
             case 'v':
             case 's':
             case 'i':
@@ -539,6 +584,7 @@ dn_run(struct instance *nci)
     }
 
     ctx->enable_gossip = enable_gossip;
+    ctx->admin_opt = admin_opt;
 
     if (!ctx->enable_gossip)
     	ctx->dyn_state = NORMAL;
@@ -554,12 +600,21 @@ dn_run(struct instance *nci)
     core_stop(ctx);
 }
 
+static void
+dn_coredump_init(void)
+{
+   struct rlimit core_limits;
+   core_limits.rlim_cur = core_limits.rlim_max = RLIM_INFINITY;
+   setrlimit(RLIMIT_CORE, &core_limits);
+}
+
 int
 main(int argc, char **argv)
 {
     rstatus_t status;
     struct instance nci;
 
+    dn_coredump_init();
     dn_set_default_options(&nci);
 
     status = dn_get_options(argc, argv, &nci);
@@ -593,7 +648,6 @@ main(int argc, char **argv)
         dn_post_run(&nci);
         exit(1);
     }
-
 
     dn_run(&nci);
 

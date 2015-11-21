@@ -68,10 +68,22 @@
 #define DN_ERROR    -1
 #define DN_EAGAIN   -2
 #define DN_ENOMEM   -3
+#define DN_ENO_IMPL -4
 
 
 typedef int rstatus_t; /* return type */
 typedef int err_t;     /* error type */
+
+#define THROW_STATUS(s)                                             \
+                {                                                   \
+                    rstatus_t __ret = (s);                          \
+                    if (__ret != DN_OK) {                           \
+                        log_debug(LOG_WARN, "failed "#s);           \
+                        return __ret;                               \
+                    }                                               \
+                }
+
+#define IGNORE_RET_VAL(x) x;
 
 struct array;
 struct string;
@@ -128,23 +140,28 @@ struct dyn_ring;
 
 #define ENCRYPTION 1
 
-
 typedef rstatus_t (*hash_t)(const char *, size_t, struct dyn_token *);
 
 typedef enum dyn_state {
-	INIT = 0,
-	STANDBY = 1,
+	INIT        = 0,
+	STANDBY     = 1,
 	WRITES_ONLY = 2,
-	RESUMING = 3,
-	NORMAL = 4,
-	SUSPENDING = 5,
-	LEAVING = 6,
-	JOINING = 7,
-	DOWN = 8,
-	REMOVED = 9,
-	EXITING = 10,
-	UNKNOWN = 11
+	RESUMING    = 3,
+	NORMAL      = 4,
+	SUSPENDING  = 5,
+	LEAVING     = 6,
+	JOINING     = 7,
+	DOWN        = 8,
+	REMOVED     = 9,
+	EXITING     = 10,
+	RESET       = 11,
+	UNKNOWN     = 12
 } dyn_state_t;
+
+typedef enum data_store {
+	DATA_REDIS        = 0, /* Data store is Redis */
+	DATA_MEMCACHE	  = 1  /* Data store is Memcache */
+} data_store_t;
 
 
 struct context {
@@ -159,6 +176,7 @@ struct context {
     dyn_state_t        dyn_state;   /* state of the node.  Don't need volatile as
                                        it is ok to eventually get its new value */
     unsigned           enable_gossip:1;   /* enable/disable gossip */
+    unsigned           admin_opt;   /* admin mode */
 };
 
 
@@ -172,6 +190,7 @@ struct instance {
     char            *stats_addr;                 /* stats monitoring addr */
     char            hostname[DN_MAXHOSTNAMELEN]; /* hostname */
     size_t          mbuf_chunk_size;             /* mbuf chunk size */
+    size_t			alloc_msgs_max;			 /* allocated messages buffer size */
     pid_t           pid;                         /* process id */
     char            *pid_filename;               /* pid filename */
     unsigned        pidfile:1;                   /* pid file created? */
@@ -225,7 +244,7 @@ struct server {
     unsigned           is_seed:1;     /* seed? */
     unsigned           processed:1;   /* flag to indicate whether this has been processed */
     unsigned           is_secure:1;   /* is the connection to the server secure? */
-    uint8_t            state;         /* state of the server - used mainly in peers  */
+    dyn_state_t        state;         /* state of the server - used mainly in peers  */
 };
 
 
@@ -261,7 +280,7 @@ struct server_pool {
     uint32_t           server_failure_limit; /* server failure limit */
     unsigned           auto_eject_hosts:1;   /* auto_eject_hosts? */
     unsigned           preconnect:1;         /* preconnect? */
-    unsigned           redis:1;              /* redis? */
+
     /* dynomite */
     struct string      seed_provider;
     struct array       seeds;                /*dyn seeds */
@@ -286,6 +305,7 @@ struct server_pool {
     /* none | datacenter | rack | all in order of increasing number of connections. (default is datacenter) */
     struct string      secure_server_option;
     struct string      pem_key_file;
+    data_store_t	   data_store;	/* the backend data store */
 
 };
 
