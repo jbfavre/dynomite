@@ -1,12 +1,6 @@
-dynomite (0.4.0-2~bbc78+1) stable; urgency=medium
+dynomite (0.5.5-1) stable; urgency=medium
 
-  * Update dynomite init script
+  * Imported upstream version 0.5.5
+  * Patch refresh for 0.5.5
 
- -- Jean Baptiste Favre <debian@jbfavre.org>  Mon, 25 May 2015 15:15:37 +0200
-
-dynomite (0.4.0-1~bbc78+1) stable; urgency=medium
-
-  * Fix build dependencies
-  * Initial package release.
-
- -- Jean Baptiste Favre <debian@jbfavre.org>  Mon, 23 Feb 2015 15:03:39 +0100
+ -- Jean Baptiste Favre <debian@jbfavre.org>  Sat, 21 Nov 2015 23:54:21 +0100
