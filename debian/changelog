@@ -1,3 +1,9 @@
+dynomite (0.5.5-1~bpo8+1) jessie; urgency=medium
+
+  * Rebuild for jessie-backports.
+
+ -- Jean Baptiste Favre <debian@jbfavre.org>  Sun, 22 Nov 2015 00:04:14 +0100
+
 dynomite (0.5.5-1) stable; urgency=medium
 
   * Imported upstream version 0.5.5
