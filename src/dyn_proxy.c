@@ -31,7 +31,7 @@ proxy_ref(struct conn *conn, void *owner)
 {
     struct server_pool *pool = owner;
 
-    ASSERT(!conn->client && conn->proxy);
+    ASSERT(conn->type == CONN_PROXY);
     ASSERT(conn->owner == NULL);
 
     conn->family = pool->family;
@@ -52,7 +52,7 @@ proxy_unref(struct conn *conn)
 {
     struct server_pool *pool;
 
-    ASSERT(!conn->client && conn->proxy);
+    ASSERT(conn->type == CONN_PROXY);
     ASSERT(conn->owner != NULL);
 
     pool = conn->owner;
@@ -69,10 +69,10 @@ proxy_close(struct context *ctx, struct conn *conn)
 {
     rstatus_t status;
 
-    ASSERT(!conn->client && conn->proxy);
+    ASSERT(conn->type == CONN_PROXY);
 
     if (conn->sd < 0) {
-        conn->unref(conn);
+        conn_unref(conn);
         conn_put(conn);
         return;
     }
@@ -82,7 +82,7 @@ proxy_close(struct context *ctx, struct conn *conn)
     ASSERT(TAILQ_EMPTY(&conn->imsg_q));
     ASSERT(TAILQ_EMPTY(&conn->omsg_q));
 
-    conn->unref(conn);
+    conn_unref(conn);
 
     status = close(conn->sd);
     if (status < 0) {
@@ -130,7 +130,7 @@ proxy_listen(struct context *ctx, struct conn *p)
     rstatus_t status;
     struct server_pool *pool = p->owner;
 
-    ASSERT(p->proxy);
+    ASSERT(p->type == CONN_PROXY);
 
     p->sd = socket(p->family, SOCK_STREAM, 0);
     if (p->sd < 0) {
@@ -200,13 +200,23 @@ proxy_each_init(void *elem, void *data)
 
     status = proxy_listen(pool->ctx, p);
     if (status != DN_OK) {
-        p->close(pool->ctx, p);
+        conn_close(pool->ctx, p);
         return status;
     }
 
+    char * log_datastore = "not selected data store";
+    if (pool->data_store == DATA_REDIS){
+    	log_datastore = "redis";
+    }
+    else if (pool->data_store == DATA_MEMCACHE){
+    	log_datastore = "memcache";
+    }
+
+
     log_debug(LOG_NOTICE, "p %d listening on '%.*s' in %s pool %"PRIu32" '%.*s'"
               " with %"PRIu32" servers", p->sd, pool->addrstr.len,
-              pool->addrstr.data, pool->redis ? "redis" : "memcache",
+              pool->addrstr.data,
+			  log_datastore,
               pool->idx, pool->name.len, pool->name.data,
               array_n(&pool->server));
 
@@ -240,7 +250,7 @@ proxy_each_deinit(void *elem, void *data)
 
     p = pool->p_conn;
     if (p != NULL) {
-        p->close(pool->ctx, p);
+        conn_close(pool->ctx, p);
     }
 
     return DN_OK;
@@ -269,7 +279,7 @@ proxy_accept(struct context *ctx, struct conn *p)
     struct conn *c;
     int sd;
 
-    ASSERT(p->proxy && !p->client);
+    ASSERT(p->type == CONN_PROXY);
     ASSERT(p->sd > 0);
     ASSERT(p->recv_active && p->recv_ready);
 
@@ -299,7 +309,7 @@ proxy_accept(struct context *ctx, struct conn *p)
         break;
     }
 
-    c = conn_get(p->owner, true, p->redis);
+    c = conn_get(p->owner, true, p->data_store);
     if (c == NULL) {
         log_error("get conn for c %d from p %d failed: %s", sd, p->sd,
                   strerror(errno));
@@ -317,7 +327,7 @@ proxy_accept(struct context *ctx, struct conn *p)
     if (status < 0) {
         log_error("set nonblock on c %d from p %d failed: %s", c->sd, p->sd,
                   strerror(errno));
-        c->close(ctx, c);
+        conn_close(ctx, c);
         return status;
     }
 
@@ -333,7 +343,7 @@ proxy_accept(struct context *ctx, struct conn *p)
     if (status < 0) {
         log_error("event add conn from p %d failed: %s", p->sd,
                   strerror(errno));
-        c->close(ctx, c);
+        conn_close(ctx, c);
         return status;
     }
 
@@ -348,7 +358,7 @@ proxy_recv(struct context *ctx, struct conn *conn)
 {
     rstatus_t status;
 
-    ASSERT(conn->proxy && !conn->client);
+    ASSERT(conn->type == CONN_PROXY);
     ASSERT(conn->recv_active);
 
     conn->recv_ready = 1;

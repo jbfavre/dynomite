@@ -21,6 +21,8 @@
  */
 
 #include "dyn_core.h"
+#include "dyn_histogram.h"
+
 
 #ifndef _DYN_STATS_H_
 #define _DYN_STATS_H_
@@ -33,17 +35,28 @@
     ACTION( client_err,                   STATS_COUNTER,      "# errors on client connections")                           \
     ACTION( client_connections,           STATS_GAUGE,        "# active client connections")                              \
     ACTION( client_read_requests,         STATS_COUNTER,      "# client read requests")                                   \
-    ACTION( client_write_requests,         STATS_COUNTER,     "# client write responses")                                 \
+    ACTION( client_write_requests,        STATS_COUNTER,      "# client write responses")                                 \
+    ACTION( client_dropped_requests,      STATS_COUNTER,      "# client dropped requests")                                \
+    ACTION( client_non_quorum_w_responses,STATS_COUNTER,      "# client non quorum write responses")                      \
+    ACTION( client_non_quorum_r_responses,STATS_COUNTER,      "# client non quorum read responses")                       \
     /* pool behavior */                                                                                                   \
     ACTION( server_ejects,                STATS_COUNTER,      "# times backend server was ejected")                       \
     /* dnode client behavior */                                                                                           \
     ACTION( dnode_client_eof,             STATS_COUNTER,      "# eof on dnode client connections")                        \
     ACTION( dnode_client_err,             STATS_COUNTER,      "# errors on dnode client connections")                     \
     ACTION( dnode_client_connections,     STATS_GAUGE,        "# active dnode client connections")                        \
+    ACTION( dnode_client_in_queue,        STATS_GAUGE,        "# dnode client requests in incoming queue")                \
+    ACTION( dnode_client_in_queue_bytes,  STATS_GAUGE,        "current dnode client request bytes in incoming queue")     \
+    ACTION( dnode_client_out_queue,       STATS_GAUGE,        "# dnode client requests in outgoing queue")                \
+    ACTION( dnode_client_out_queue_bytes, STATS_GAUGE,        "current dnode client request bytes in outgoing queue")     \
     /* peer behavior */                                                                                                   \
+    ACTION( peer_dropped_requests,        STATS_COUNTER,      "# local dc peer dropped requests")                                  \
+    ACTION( peer_timedout_requests,       STATS_COUNTER,      "# local dc peer timedout requests")                                 \
+    ACTION( remote_peer_timedout_requests,STATS_COUNTER,      "# remote dc peer timedout requests")                                 \
     ACTION( peer_eof,                     STATS_COUNTER,      "# eof on peer connections")                                \
     ACTION( peer_err,                     STATS_COUNTER,      "# errors on peer connections")                             \
-    ACTION( peer_timedout,                STATS_COUNTER,      "# timeouts on peer connections")                           \
+    ACTION( peer_timedout,                STATS_COUNTER,      "# timeouts on local dc peer connections")                           \
+    ACTION( remote_peer_timedout,         STATS_COUNTER,      "# timeouts on remote dc peer connections")                           \
     ACTION( peer_connections,             STATS_GAUGE,        "# active peer connections")                                \
     ACTION( peer_forward_error,           STATS_GAUGE,        "# times we encountered a peer forwarding error")           \
     ACTION( peer_requests,                STATS_COUNTER,      "# peer requests")                                          \
@@ -51,36 +64,57 @@
     ACTION( peer_responses,               STATS_COUNTER,      "# peer respones")                                          \
     ACTION( peer_response_bytes,          STATS_COUNTER,      "total peer response bytes")                                \
     ACTION( peer_ejects,                  STATS_COUNTER,      "# times a peer was ejected")                               \
-    ACTION( peer_in_queue,                STATS_GAUGE,        "# peer requests in incoming queue")                        \
+    ACTION( peer_in_queue,                STATS_GAUGE,        "# local dc peer requests in incoming queue")                        \
+    ACTION( remote_peer_in_queue,         STATS_GAUGE,        "# remote dc peer requests in incoming queue")                        \
     ACTION( peer_in_queue_bytes,          STATS_GAUGE,        "current peer request bytes in incoming queue")             \
-    ACTION( peer_out_queue,               STATS_GAUGE,        "# peer requests in outgoing queue")                        \
+    ACTION( peer_out_queue,               STATS_GAUGE,        "# local dc peer requests in outgoing queue")                        \
+    ACTION( remote_peer_out_queue,        STATS_GAUGE,        "# remote dc peer requests in outgoing queue")                        \
     ACTION( peer_out_queue_bytes,         STATS_GAUGE,        "current peer request bytes in outgoing queue")             \
+    ACTION( peer_mismatch_requests,       STATS_COUNTER,      "current dnode peer mismatched messages")                   \
     /* forwarder behavior */                                                                                              \
     ACTION( forward_error,                STATS_COUNTER,      "# times we encountered a forwarding error")                \
     ACTION( fragments,                    STATS_COUNTER,      "# fragments created from a multi-vector request")          \
     ACTION( stats_count,                  STATS_COUNTER,      "# stats request")                                          \
 
-#define STATS_SERVER_CODEC(ACTION)                                                                                       \
-    /* server behavior */                                                                                           \
-    ACTION( server_eof,             STATS_COUNTER,           "# eof on server connections")                              \
-    ACTION( server_err,             STATS_COUNTER,           "# errors on server connections")                           \
-    ACTION( server_timedout,        STATS_COUNTER,           "# timeouts on server connections")                         \
-    ACTION( server_connections,     STATS_GAUGE,             "# active server connections")                              \
-    ACTION( server_ejected_at,      STATS_TIMESTAMP,         "timestamp when server was ejected in usec since epoch")    \
-    /* data behavior */                                                                                                  \
-    ACTION( read_requests,               STATS_COUNTER,      "# read requests")                                          \
-    ACTION( read_request_bytes,          STATS_COUNTER,      "total read request bytes")                                 \
-    ACTION( write_requests,               STATS_COUNTER,     "# write requests")                                         \
-    ACTION( write_request_bytes,          STATS_COUNTER,     "total write request bytes")                                \
-    ACTION( read_responses,              STATS_COUNTER,      "# read respones")                                          \
-    ACTION( read_response_bytes,         STATS_COUNTER,      "total read response bytes")                                \
-    ACTION( write_responses,              STATS_COUNTER,     "# write respones")                                         \
-    ACTION( write_response_bytes,         STATS_COUNTER,     "total write response bytes")                               \
-    ACTION( in_queue,               STATS_GAUGE,             "# requests in incoming queue")                             \
-    ACTION( in_queue_bytes,         STATS_GAUGE,             "current request bytes in incoming queue")                  \
-    ACTION( out_queue,              STATS_GAUGE,             "# requests in outgoing queue")                             \
-    ACTION( out_queue_bytes,        STATS_GAUGE,             "current request bytes in outgoing queue")                  \
-
+#define STATS_SERVER_CODEC(ACTION)                                                                                             \
+    /* server behavior */                                                                                                      \
+    ACTION( server_eof,                   STATS_COUNTER,           "# eof on server connections")                              \
+    ACTION( server_err,                   STATS_COUNTER,           "# errors on server connections")                           \
+    ACTION( server_timedout,              STATS_COUNTER,           "# timeouts on server connections")                         \
+    ACTION( server_connections,           STATS_GAUGE,             "# active server connections")                              \
+    ACTION( server_ejected_at,            STATS_TIMESTAMP,         "timestamp when server was ejected in usec since epoch")    \
+    ACTION( server_dropped_requests,      STATS_COUNTER,           "# server dropped requests")                                \
+    ACTION( server_timedout_requests,     STATS_COUNTER,           "# server timedout requests")                               \
+    /* data behavior */                                                                                                        \
+    ACTION( read_requests,                STATS_COUNTER,           "# read requests")                                          \
+    ACTION( read_request_bytes,           STATS_COUNTER,           "total read request bytes")                                 \
+    ACTION( write_requests,               STATS_COUNTER,           "# write requests")                                         \
+    ACTION( write_request_bytes,          STATS_COUNTER,           "total write request bytes")                                \
+    ACTION( read_responses,               STATS_COUNTER,           "# read respones")                                          \
+    ACTION( read_response_bytes,          STATS_COUNTER,           "total read response bytes")                                \
+    ACTION( write_responses,              STATS_COUNTER,           "# write respones")                                         \
+    ACTION( write_response_bytes,         STATS_COUNTER,           "total write response bytes")                               \
+    ACTION( in_queue,                     STATS_GAUGE,             "# requests in incoming queue")                             \
+    ACTION( in_queue_bytes,               STATS_GAUGE,             "current request bytes in incoming queue")                  \
+    ACTION( out_queue,                    STATS_GAUGE,             "# requests in outgoing queue")                             \
+    ACTION( out_queue_bytes,              STATS_GAUGE,             "current request bytes in outgoing queue")                  \
+    /* Redis */																											  \
+	ACTION( redis_req_get,				  STATS_COUNTER,	  "# Redis get")											  \
+	ACTION( redis_req_set,				  STATS_COUNTER,	  "# Redis set")											  \
+	ACTION( redis_req_del,				  STATS_COUNTER,	  "# Redis del")											  \
+	ACTION( redis_req_incr_decr,		  STATS_COUNTER,	  "# Redis incr or decr")									  \
+	ACTION( redis_req_keys,				  STATS_COUNTER,	  "# Redis keys")											  \
+	ACTION( redis_req_mget,				  STATS_COUNTER,	  "# Redis mget")											  \
+	ACTION( redis_req_scan,				  STATS_COUNTER,	  "# Redis scan")											  \
+	ACTION( redis_req_sort,				  STATS_COUNTER,	  "# Redis sort")											  \
+	ACTION( redis_req_lreqm,			  STATS_COUNTER,	  "# Redis lreqm")											  \
+	ACTION( redis_req_sunion,			  STATS_COUNTER,	  "# Redis sunion")											  \
+	ACTION( redis_req_ping,				  STATS_COUNTER,	  "# Redis ping")											  \
+	ACTION( redis_req_lists,			  STATS_COUNTER,	  "# Redis lists")											  \
+	ACTION( redis_req_sets,				  STATS_COUNTER,	  "# Redis sets")											  \
+	ACTION( redis_req_hashes,			  STATS_COUNTER,	  "# Redis hashes")											  \
+	ACTION( redis_req_sortedsets,		  STATS_COUNTER,	  "# Redis sortedsets")										  \
+	ACTION( redis_req_other,			  STATS_COUNTER,	  "# Redis other")											  \
 
 #define STATS_ADDR      "0.0.0.0"
 #define STATS_PORT      22222
@@ -94,6 +128,28 @@ typedef enum stats_type {
     STATS_STRING,
     STATS_SENTINEL
 } stats_type_t;
+
+typedef enum {
+    CMD_UNKNOWN,
+    CMD_INFO,
+    CMD_PING,
+    CMD_DESCRIBE,
+    CMD_STANDBY,
+    CMD_WRITES_ONLY,
+    CMD_RESUMING,
+    CMD_NORMAL,
+    CMD_BOOTSTRAPING,
+    CMD_LEAVING,
+    CMD_PEER_DOWN,
+    CMD_PEER_UP,
+    CMD_PEER_RESET,
+    CMD_LOG_LEVEL_UP,
+    CMD_LOG_LEVEL_DOWN,
+    CMD_HISTO_RESET,
+    CMD_CL_DESCRIBE,  /* cluster_describe */
+    CMD_SET_CONSISTENCY,
+    CMD_GET_CONSISTENCY
+} stats_cmd_t;
 
 struct stats_metric {
     stats_type_t  type;         /* type */
@@ -128,50 +184,59 @@ struct stats_buffer {
 };
 
 struct stats {
-    struct context      *ctx;
-    uint16_t            port;           /* stats monitoring port */
-    int                 interval;       /* stats aggregation interval */
-    struct string       addr;           /* stats monitoring address */
+    struct context           *ctx;
+    uint16_t                  port;           /* stats monitoring port */
+    int                       interval;       /* stats aggregation interval */
+    struct string             addr;           /* stats monitoring address */
 
-    int64_t             start_ts;       /* start timestamp of dynomite */
-    struct stats_buffer buf;            /* output buffer */
+    int64_t                   start_ts;       /* start timestamp of dynomite */
+    struct stats_buffer       buf;            /* info buffer */
+    struct stats_buffer       clus_desc_buf;  /* cluster_describe buffer */
 
-    struct array        current;        /* stats_pool[] (a) */
-    struct array        shadow;         /* stats_pool[] (b) */
-    struct array        sum;            /* stats_pool[] (c = a + b) */
+    struct array              current;        /* stats_pool[] (a) */
+    struct array              shadow;         /* stats_pool[] (b) */
+    struct array              sum;            /* stats_pool[] (c = a + b) */
 
-    pthread_t           tid;            /* stats aggregator thread */
-    int                 sd;             /* stats descriptor */
+    pthread_t                 tid;            /* stats aggregator thread */
+    int                       sd;             /* stats descriptor */
 
-    struct string       service_str;    /* service string */
-    struct string       service;        /* service */
-    struct string       source_str;     /* source string */
-    struct string       source;         /* source */
-    struct string       version_str;    /* version string */
-    struct string       version;        /* version */
-    struct string       uptime_str;     /* uptime string */
-    struct string       timestamp_str;  /* timestamp string */
-    struct string       latency_999th_str;
-    struct string       latency_99th_str;
-    struct string       latency_95th_str;
-    struct string       latency_mean_str;
-    struct string       latency_max_str;
+    struct string             service_str;    /* service string */
+    struct string             service;        /* service */
+    struct string             source_str;     /* source string */
+    struct string             source;         /* source */
+    struct string             version_str;    /* version string */
+    struct string             version;        /* version */
+    struct string             uptime_str;     /* uptime string */
+    struct string             timestamp_str;  /* timestamp string */
+    struct string             latency_999th_str;
+    struct string             latency_99th_str;
+    struct string             latency_95th_str;
+    struct string             latency_mean_str;
+    struct string             latency_max_str;
 
-    struct string       rack_str;
-    struct string       rack;
+    struct string             payload_size_999th_str;
+    struct string             payload_size_99th_str;
+    struct string             payload_size_95th_str;
+    struct string             payload_size_mean_str;
+    struct string             payload_size_max_str;
 
-    struct string       dc_str;
-    struct string       dc;
+    struct string             alloc_msgs_str;
 
-    volatile int        aggregate;      /* shadow (b) aggregate? */
-    volatile int        updated;        /* current (a) updated? */
-    volatile uint64_t   latency_999th;
-    volatile uint64_t   latency_99th;
-    volatile uint64_t   latency_95th;
-    volatile uint64_t   latency_mean;
-    volatile uint64_t   latency_max;
+    struct string             rack_str;
+    struct string             rack;
+
+    struct string             dc_str;
+    struct string             dc;
+
+    volatile int              aggregate;      /* shadow (b) aggregate? */
+    volatile int              updated;        /* current (a) updated? */
+    volatile bool             reset_histogram;
+    volatile struct histogram latency_histo;
+    volatile struct histogram payload_size_histo;
+    volatile uint32_t         alloc_msgs;
 
 };
+
 
 #define DEFINE_ACTION(_name, _type, _desc) STATS_POOL_##_name,
 typedef enum stats_pool_field {
@@ -188,18 +253,11 @@ typedef enum stats_server_field {
 #undef DEFINE_ACTION
 
 
-typedef enum stats_cmd {
-    STATS_INFO,
-    STATS_PING,
-    STATS_DESCRIBE,
-    STATS_STANDBY,
-    STATS_WRITES_ONLY,
-    STATS_RESUMING,
-    STATS_NORMAL,
-    STATS_BOOTSTRAPING,
-    STATS_LEAVING,
-    STATS_UNKNOWN
-} stats_cmd_t;
+
+struct stats_cmd {
+	stats_cmd_t cmd;
+	struct string req_data;
+};
 
 
 #if defined DN_STATS && DN_STATS == 1
@@ -224,9 +282,15 @@ typedef enum stats_cmd {
     _stats_pool_set_ts(_ctx, _pool, STATS_POOL_##_name, _val);          \
 } while (0)
 
+#define stats_pool_get_ts(_ctx, _pool, _name)                           \
+    _stats_pool_get_ts(_ctx, _pool, STATS_POOL_##_name)
+
 #define stats_pool_set_val(_ctx, _pool, _name, _val) do {                \
     _stats_pool_set_val(_ctx, _pool, STATS_POOL_##_name, _val);          \
 } while (0)
+
+#define stats_pool_get_val(_ctx, _pool, _name)                          \
+    _stats_pool_get_val(_ctx, _pool, STATS_POOL_##_name)
 
 #define stats_server_incr(_ctx, _server, _name) do {                    \
     _stats_server_incr(_ctx, _server, STATS_SERVER_##_name);            \
@@ -248,6 +312,16 @@ typedef enum stats_cmd {
      _stats_server_set_ts(_ctx, _server, STATS_SERVER_##_name, _val);   \
 } while (0)
 
+#define stats_server_get_ts(_ctx, _server, _name)                       \
+     _stats_server_get_ts(_ctx, _server, STATS_SERVER_##_name)
+
+#define stats_server_set_val(_ctx, _server, _name, _val) do {           \
+     _stats_server_set_val(_ctx, _server, STATS_SERVER_##_name, _val);  \
+} while (0)
+
+#define stats_server_get_val(_ctx, _server, _name)                      \
+     _stats_server_get_val(_ctx, _server, STATS_SERVER_##_name)
+
 
 #else
 
@@ -261,6 +335,8 @@ typedef enum stats_cmd {
 
 #define stats_pool_set_val(_ctx, _pool, _name, _val)
 
+#define stats_pool_get_val(_ctx, _pool, _name)
+
 #define stats_server_incr(_ctx, _server, _name)
 
 #define stats_server_decr(_ctx, _server, _name)
@@ -269,6 +345,13 @@ typedef enum stats_cmd {
 
 #define stats_server_decr_by(_ctx, _server, _name, _val)
 
+#define stats_server_set_ts(_ctx, _server, _name, _val)
+
+#define stats_server_get_ts(_ctx, _server, _name)
+
+#define stats_server_set_val(_ctx, _server, _name, _val)
+
+#define stats_server_get_val(_ctx, _server, _name)
 
 #endif
 
@@ -281,19 +364,29 @@ void _stats_pool_decr(struct context *ctx, struct server_pool *pool, stats_pool_
 void _stats_pool_incr_by(struct context *ctx, struct server_pool *pool, stats_pool_field_t fidx, int64_t val);
 void _stats_pool_decr_by(struct context *ctx, struct server_pool *pool, stats_pool_field_t fidx, int64_t val);
 void _stats_pool_set_ts(struct context *ctx, struct server_pool *pool, stats_pool_field_t fidx, int64_t val);
+uint64_t _stats_pool_get_ts(struct context *ctx, struct server_pool *pool, stats_pool_field_t fidx);
 void _stats_pool_set_val(struct context *ctx, struct server_pool *pool, stats_pool_field_t fidx, int64_t val);
-
+int64_t _stats_pool_get_val(struct context *ctx, struct server_pool *pool,
+		                 stats_pool_field_t fidx);
 
 void _stats_server_incr(struct context *ctx, struct server *server, stats_server_field_t fidx);
 void _stats_server_decr(struct context *ctx, struct server *server, stats_server_field_t fidx);
 void _stats_server_incr_by(struct context *ctx, struct server *server, stats_server_field_t fidx, int64_t val);
 void _stats_server_decr_by(struct context *ctx, struct server *server, stats_server_field_t fidx, int64_t val);
 void _stats_server_set_ts(struct context *ctx, struct server *server, stats_server_field_t fidx, int64_t val);
-
+uint64_t _stats_server_get_ts(struct context *ctx, struct server *server, stats_server_field_t fidx);
+void _stats_server_set_val(struct context *ctx, struct server *server, stats_server_field_t fidx, int64_t val);
+int64_t _stats_server_get_val(struct context *ctx, struct server *server, stats_server_field_t fidx);
 
 struct stats *stats_create(uint16_t stats_port, char *stats_ip, int stats_interval, char *source,
 		                   struct array *server_pool, struct context *ctx);
 void stats_destroy(struct stats *stats);
 void stats_swap(struct stats *stats);
 
+
+void stats_histo_add_latency(struct context *ctx, uint64_t val);
+void stats_histo_add_payloadsize(struct context *ctx, uint64_t val);
+
+
 #endif
+

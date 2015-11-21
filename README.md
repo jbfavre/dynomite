@@ -1,11 +1,10 @@
 <!--
 # Dynomite
 -->
-![](images/dynomite-logo.png?raw=true =150x150) </br>
-**Dynomite**, inspired by Dynamo whitepaper, is a thin, distributed dynamo layer for different storages and protocols. 
+**Dynomite**, inspired by [Dynamo whitepaper](http://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf), is a thin, distributed dynamo layer for different storage engines and protocols. Currently these include [Redis](http://redis.io) and [Memcached](http://www.memcached.org/).  Dynomite supports multi-datacenter replication and is designed for high availability.
+<center>![dynomite logo](images/dynomite-logo.png?raw=true =150x150)</center>
 
-When Dynomite team decided to settle on using C language, we found Twemproxy and did a fork in order to provide more features than just being a proxy layer.
-
+The ultimate goal with Dynomite is to be able to implement high availability and cross-datacenter replication on storage engines that do not inherently provide that functionality. The implementation is efficient, not complex (few moving parts), and highly performant.
 
 ## Build
 
@@ -32,6 +31,7 @@ To build Dynomite in _debug mode_:
     Usage: dynomite [-?hVdDt] [-v verbosity level] [-o output file]
                       [-c conf file] [-s stats port] [-a stats addr]
                       [-i stats interval] [-p pid file] [-m mbuf size]
+                      [-M max alloc messages]
 
     Options:
       -h, --help             : this help
@@ -47,33 +47,34 @@ To build Dynomite in _debug mode_:
       -i, --stats-interval=N : set stats aggregation interval in msec (default: 30000 msec)
       -p, --pid-file=S       : set pid file (default: off)
       -m, --mbuf-size=N      : set size of mbuf chunk in bytes (default: 16384 bytes)
+      -M, --max-msgs=N       : set max number of messages to allocate (default: 2000000)
 
 
 ## Configuration
 
 Dynomite can be configured through a YAML file specified by the -c or --conf-file command-line argument on process start. The configuration files parses and understands the following keys:
 
-+ **env**: Specify environment of a node.  Currently support aws and network (for physical datacenter).
-+ **datacenter**: The name of the datacenter.  Please refer to architecture document.
-+ **rack**: The name of the rack.  Please refer to architecture document.
-+ **dyn_listen**: The port that dynomite nodes are using to inter-communicate and gossip.
++ **env**: Specify environment of a node.  Currently supports aws and network (for physical datacenter).
++ **datacenter**: The name of the datacenter.  Please refer to [architecture document](https://github.com/Netflix/dynomite/wiki/Architecture).
++ **rack**: The name of the rack.  Please refer to [architecture document](https://github.com/Netflix/dynomite/wiki/Architecture).
++ **dyn_listen**: The port that dynomite nodes use to inter-communicate and gossip.
 + **gos_interval**: The sleeping time in milliseconds at the end of a gossip round.
 + **tokens**: The token(s) owned by a node.  Currently, we don't support vnode yet so this only works with one token for the time being.
-+ **dyn_seed_provider**: A seed provider implementation to provide a list of seed nodes
++ **dyn_seed_provider**: A seed provider implementation to provide a list of seed nodes.
 + **dyn_seeds**: A list of seed nodes in the format: address:port:rack:dc:tokens (node that vnode is not supported yet)
 + **listen**: The listening address and port (name:port or ip:port) for this server pool.
 + **timeout**: The timeout value in msec that we wait for to establish a connection to the server or receive a response from a server. By default, we wait indefinitely.
 + **preconnect**: A boolean value that controls if dynomite should preconnect to all the servers in this pool on process start. Defaults to false.
-+ **redis**: A boolean value that controls if a server pool speaks redis or memcached protocol. Defaults to false.
++ **data_store**: An integer value that controls if a server pool speaks redis (0) or memcached (1) or other protocol. Defaults to redis (0).
 + **server_connections**: The maximum number of connections that can be opened to each server. By default, we open at most 1 server connection.
 + **auto_eject_hosts**: A boolean value that controls if server should be ejected temporarily when it fails consecutively server_failure_limit times. See [liveness recommendations](notes/recommendation.md#liveness) for information. Defaults to false.
 + **server_retry_timeout**: The timeout value in msec to wait for before retrying on a temporarily ejected server, when auto_eject_host is set to true. Defaults to 30000 msec.
-+ **server_failure_limit**: The number of conseutive failures on a server that would leads to it being temporarily ejected when auto_eject_host is set to true. Defaults to 2.
++ **server_failure_limit**: The number of consecutive failures on a server that would lead to it being temporarily ejected when auto_eject_host is set to true. Defaults to 2.
 + **servers**: A list of local server address, port and weight (name:port:weight or ip:port:weight) for this server pool. Usually there is just one.
 
 For example, the configuration file in [conf/dynomite.yml](conf/dynomite.yml)
 
-Finally, to make writing syntactically correct configuration file easier, dynomite provides a command-line argument -t or --test-conf that can be used to test the YAML configuration file for any syntax error.
+Finally, to make writing syntactically correct configuration files easier, dynomite provides a command-line argument -t or --test-conf that can be used to test the YAML configuration file for any syntax error.
 
 
 

@@ -14,6 +14,24 @@ typedef enum dmsg_version {
     VERSION_10 = 1
 } dmsg_version_t;
 
+enum {
+        DYN_START = 0,
+        DYN_MAGIC_STRING = 1000,
+        DYN_MSG_ID,
+        DYN_TYPE_ID,
+        DYN_BIT_FIELD,
+        DYN_VERSION,
+        DYN_SAME_DC,
+        DYN_STAR,
+        DYN_DATA_LEN,
+        DYN_DATA,
+        DYN_SPACES_BEFORE_PAYLOAD_LEN,
+        DYN_PAYLOAD_LEN,
+        DYN_CRLF_BEFORE_DONE,
+        DYN_DONE,
+        DYN_POST_DONE,
+        DYN_UNKNOWN
+} dyn_state;
 
 typedef enum dmsg_type {
     DMSG_UNKNOWN = 0,
@@ -79,5 +97,8 @@ rstatus_t dmsg_write(struct mbuf *mbuf, uint64_t msg_id, uint8_t type,
 rstatus_t dmsg_write_mbuf(struct mbuf *mbuf, uint64_t msg_id, uint8_t type,
 		                  struct conn *conn, uint32_t plen);
 bool dmsg_process(struct context *ctx, struct conn *conn, struct dmsg *dmsg);
+
+void data_store_parse_req(struct msg *r);
+void data_store_parse_rsp(struct msg *r);
 
 #endif

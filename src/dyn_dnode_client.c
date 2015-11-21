@@ -7,13 +7,12 @@
 #include "dyn_server.h"
 #include "dyn_dnode_client.h"
 
-
 void
 dnode_client_ref(struct conn *conn, void *owner)
 {
     struct server_pool *pool = owner;
 
-    ASSERT(conn->dnode_client && !conn->dnode_server);
+    ASSERT(conn->type == CONN_DNODE_PEER_CLIENT);
     ASSERT(conn->owner == NULL);
 
     /*
@@ -30,7 +29,6 @@ dnode_client_ref(struct conn *conn, void *owner)
 
     /* owner of the client connection is the server pool */
     conn->owner = owner;
-
     log_debug(LOG_VVERB, "dyn: ref conn %p owner %p into pool '%.*s'", conn, pool,
               pool->name.len, pool->name.data);
 }
@@ -40,7 +38,7 @@ dnode_client_unref(struct conn *conn)
 {
     struct server_pool *pool;
 
-    ASSERT(conn->dnode_client && !conn->dnode_server);
+    ASSERT(conn->type == CONN_DNODE_PEER_CLIENT);
     ASSERT(conn->owner != NULL);
 
     pool = conn->owner;
@@ -57,7 +55,7 @@ dnode_client_unref(struct conn *conn)
 bool
 dnode_client_active(struct conn *conn)
 {
-    ASSERT(conn->dnode_client && !conn->dnode_server);
+    ASSERT(conn->type == CONN_DNODE_PEER_CLIENT);
 
     ASSERT(TAILQ_EMPTY(&conn->imsg_q));
 
@@ -116,12 +114,12 @@ dnode_client_close(struct context *ctx, struct conn *conn)
     rstatus_t status;
     struct msg *msg, *nmsg; /* current and next message */
 
-    ASSERT(conn->dnode_client && !conn->dnode_server);
+    ASSERT(conn->type == CONN_DNODE_PEER_CLIENT);
 
     dnode_client_close_stats(ctx, conn->owner, conn->err, conn->eof);
 
     if (conn->sd < 0) {
-        conn->unref(conn);
+        conn_unref(conn);
         conn_put(conn);
         return;
     }
@@ -133,9 +131,11 @@ dnode_client_close(struct context *ctx, struct conn *conn)
         ASSERT(msg->peer == NULL);
         ASSERT(msg->request && !msg->done);
 
-        log_debug(LOG_INFO, "dyn: close c %d discarding pending req %"PRIu64" len "
+        if (log_loggable(LOG_INFO)) {
+           log_debug(LOG_INFO, "dyn: close c %d discarding pending req %"PRIu64" len "
                   "%"PRIu32" type %d", conn->sd, msg->id, msg->mlen,
                   msg->type);
+        }
 
         req_put(msg);
     }
@@ -147,13 +147,15 @@ dnode_client_close(struct context *ctx, struct conn *conn)
         nmsg = TAILQ_NEXT(msg, c_tqe);
 
         /* dequeue the message (request) from client outq */
-        conn->dequeue_outq(ctx, conn, msg);
+        conn_dequeue_outq(ctx, conn, msg);
 
         if (msg->done) {
-            log_debug(LOG_INFO, "dyn: close c %d discarding %s req %"PRIu64" len "
+            if (log_loggable(LOG_INFO)) {
+               log_debug(LOG_INFO, "dyn: close c %d discarding %s req %"PRIu64" len "
                       "%"PRIu32" type %d", conn->sd,
                       msg->error ? "error": "completed", msg->id, msg->mlen,
                       msg->type);
+            }
             req_put(msg);
         } else {
             msg->swallow = 1;
@@ -161,14 +163,16 @@ dnode_client_close(struct context *ctx, struct conn *conn)
             ASSERT(msg->request);
             ASSERT(msg->peer == NULL);
 
-            log_debug(LOG_INFO, "dyn: close c %d schedule swallow of req %"PRIu64" "
+            if (log_loggable(LOG_INFO)) {
+               log_debug(LOG_INFO, "dyn: close c %d schedule swallow of req %"PRIu64" "
                       "len %"PRIu32" type %d", conn->sd, msg->id, msg->mlen,
                       msg->type);
+            }
         }
     }
     ASSERT(TAILQ_EMPTY(&conn->omsg_q));
 
-    conn->unref(conn);
+    conn_unref(conn);
 
     status = close(conn->sd);
     if (status < 0) {
@@ -177,4 +181,23 @@ dnode_client_close(struct context *ctx, struct conn *conn)
     conn->sd = -1;
 
     conn_put(conn);
+}
+
+rstatus_t
+dnode_client_handle_response(struct conn *conn, msgid_t msgid, struct msg *rsp)
+{
+    // Forward the response to the caller which is client connection.
+    rstatus_t status = DN_OK;
+    struct context *ctx = conn_to_ctx(conn);
+    /* There is no hash table on the dnode client side. So we rely on rsp->peer
+       to get the corresponding request */
+    ASSERT_LOG(rsp->peer, "rsp %d:%d does not have a peer", rsp->id, rsp->parent_id);
+    struct msg *req = rsp->peer;
+    req->peer = NULL;
+    req->selected_rsp = rsp;
+    status = event_add_out(ctx->evb, conn);
+    if (status != DN_OK) {
+        conn->err = errno;
+    }
+    return status;
 }

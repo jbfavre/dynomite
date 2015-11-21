@@ -25,24 +25,6 @@ static unsigned char aes_decrypted_buf[34];
 
 static rstatus_t dmsg_to_gossip(struct ring_msg *rmsg);
 
-enum {
-        DYN_START = 0,
-        DYN_MAGIC_STRING = 1000,
-        DYN_MSG_ID,
-        DYN_TYPE_ID,
-        DYN_BIT_FIELD,
-        DYN_VERSION,
-        DYN_SAME_DC,
-        DYN_STAR,
-        DYN_DATA_LEN,
-        DYN_DATA,
-        DYN_SPACES_BEFORE_PAYLOAD_LEN,
-        DYN_PAYLOAD_LEN,
-        DYN_CRLF_BEFORE_DONE,
-        DYN_DONE,
-        DYN_UNKNOWN
-} state;
-
 
 static bool 
 dyn_parse_core(struct msg *r)
@@ -53,7 +35,14 @@ dyn_parse_core(struct msg *r)
    uint8_t ch = ' ';
    uint64_t num = 0;
 
-   state = r->dyn_state;
+   dyn_state = r->dyn_state;
+   if (log_loggable(LOG_DEBUG)) {
+      log_debug(LOG_DEBUG, "dyn_state:  %d", r->dyn_state);
+   }
+
+   if (r->dyn_state == DYN_DONE || r->dyn_state == DYN_POST_DONE)
+       return true;
+
    b = STAILQ_LAST(&r->mhdr, mbuf, next);
 
    dmsg = r->dmsg;
@@ -71,31 +60,38 @@ dyn_parse_core(struct msg *r)
 
    for (p = r->pos; p < b->last; p++) {
       ch = *p;
-      switch (state) {
+      switch (dyn_state) {
       case DYN_START:
-         log_debug(LOG_DEBUG, "DYN_START");
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_START");
+         }
+         if (ch != ' ' && ch != '$') {
+            break;
+         }
+
          if (ch == ' ') {
             if (token == NULL)
                token = p;
 
             break;
          }
+
          if (ch == '$') {
-                if (p + 5 < b->last) {
+              if (p + 5 < b->last) {
                   if ((*(p+1) == '2') &&
-                   (*(p+2) == '0') &&
-                   (*(p+3) == '1') &&
-                   (*(p+4) == '4') &&
-                   (*(p+5) == '$')) {
-                   state = DYN_MAGIC_STRING;
-                   p += 5;
+                      (*(p+2) == '0') &&
+                      (*(p+3) == '1') &&
+                      (*(p+4) == '4') &&
+                      (*(p+5) == '$')) {
+                     dyn_state = DYN_MAGIC_STRING;
+                     p += 5;
                   } else {
-                   //goto skip;
-                   token = NULL; //reset
+                     //goto skip;
+                     token = NULL; //reset
                   }
-                } else {
+              } else {
                     goto split;
-                }
+              }
          } else {
             loga("Facing a weird char %c", p);
             //goto skip;
@@ -105,9 +101,11 @@ dyn_parse_core(struct msg *r)
          break;
 
       case DYN_MAGIC_STRING:
-         log_debug(LOG_DEBUG, "DYN_MAGIC_STRING");
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_MAGIC_STRING");
+         }
          if (ch == ' ') {
-            state = DYN_MSG_ID;
+            dyn_state = DYN_MSG_ID;
             num = 0;
             break;
          } else {
@@ -115,44 +113,52 @@ dyn_parse_core(struct msg *r)
             token = NULL;
             loga("Facing a weird char %c", p);
             //goto skip;
-            state = DYN_START;
+            dyn_state = DYN_START;
          }
 
          break;
 
       case DYN_MSG_ID:
-         log_debug(LOG_DEBUG, "DYN_MSG_ID");
-         log_debug(LOG_DEBUG, "num = %d", num);
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_MSG_ID");
+            log_debug(LOG_DEBUG, "num = %d", num);
+         }
          if (isdigit(ch))  {
             num = num*10 + (ch - '0');
-         } else if (ch == ' '&& isdigit(*(p-1)))  {
-            log_debug(LOG_DEBUG, "MSG ID : %d", num);
+         } else if (ch == ' ' && isdigit(*(p-1)))  {
+            if (log_loggable(LOG_DEBUG)) {
+               log_debug(LOG_DEBUG, "MSG ID : %d", num);
+            }
             dmsg->id = num;
-            state = DYN_TYPE_ID;
+            dyn_state = DYN_TYPE_ID;
             num = 0;
          } else {
             //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
             //goto skip;
             token = NULL; //reset
-            state = DYN_START;
+            dyn_state = DYN_START;
             if (ch == '$')
                p -= 1;
          }
          break;
 
       case DYN_TYPE_ID:
-         log_debug(LOG_DEBUG, "DYN_TYPE_ID: num = %d", num);
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_TYPE_ID: num = %d", num);
+         }
          if (isdigit(ch))  {
             num = num*10 + (ch - '0');
          } else if (ch == ' ' && isdigit(*(p-1)))  {
-            log_debug(LOG_DEBUG, "Type Id: %d", num);
+            if (log_loggable(LOG_DEBUG)) {
+               log_debug(LOG_DEBUG, "Type Id: %d", num);
+            }
             dmsg->type = num;
-            state = DYN_BIT_FIELD;
+            dyn_state = DYN_BIT_FIELD;
             num = 0;
          } else {
             //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
             token = NULL;
-            state = DYN_START;
+            dyn_state = DYN_START;
             if (ch == '$')
                p -= 1;
          }
@@ -160,18 +166,22 @@ dyn_parse_core(struct msg *r)
          break;
 
       case DYN_BIT_FIELD:
-         log_debug(LOG_DEBUG, "DYN_BIT_FIELD, num = %d", num);
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_BIT_FIELD, num = %d", num);
+         }
          if (isdigit(ch))  {
             num = num*10 + (ch - '0');
          } else if (ch == ' ' && isdigit(*(p-1)))  {
-            log_debug(LOG_DEBUG, "DYN_BIT_FIELD : %d", num);
+            if (log_loggable(LOG_DEBUG)) {
+               log_debug(LOG_DEBUG, "DYN_BIT_FIELD : %d", num);
+            }
             dmsg->bit_field = num & 0xF;
-            state = DYN_VERSION;
+            dyn_state = DYN_VERSION;
             num = 0;
          } else {
             token = NULL;
             //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
-            state = DYN_START;
+            dyn_state = DYN_START;
             if (ch == '$')
                p -= 1;
          }
@@ -179,18 +189,22 @@ dyn_parse_core(struct msg *r)
          break;
 
       case DYN_VERSION:
-         log_debug(LOG_DEBUG, "DYN_VERSION: num = %d", num);
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_VERSION: num = %d", num);
+         }
          if (isdigit(ch))  {
             num = num*10 + (ch - '0');
          } else if (ch == ' ' && isdigit(*(p-1)))  {
-            log_debug(LOG_DEBUG, "VERSION : %d", num);
+            if (log_loggable(LOG_DEBUG)) {
+               log_debug(LOG_DEBUG, "VERSION : %d", num);
+            }
             dmsg->version = num;
-            state = DYN_SAME_DC;
+            dyn_state = DYN_SAME_DC;
             num = 0;
          } else {
             token = NULL;
             //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
-            state = DYN_START;
+            dyn_state = DYN_START;
             if (ch == '$')
                p -= 1;
          }
@@ -200,14 +214,16 @@ dyn_parse_core(struct msg *r)
       case DYN_SAME_DC:
       	if (isdigit(ch)) {
       		dmsg->same_dc = ch - '0';
-           	log_debug(LOG_DEBUG, "DYN_SAME_DC %d", dmsg->same_dc);
+      		if (log_loggable(LOG_DEBUG)) {
+           	   log_debug(LOG_DEBUG, "DYN_SAME_DC %d", dmsg->same_dc);
+      		}
       	} else if (ch == ' ' && isdigit(*(p-1))) {
-      		state = DYN_DATA_LEN;
+      		dyn_state = DYN_DATA_LEN;
       		num = 0;
       	} else {
       		token = NULL;
       		//loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
-      		state = DYN_START;
+      		dyn_state = DYN_START;
       		if (ch == '$')
       		   p -= 1;
       	}
@@ -215,31 +231,37 @@ dyn_parse_core(struct msg *r)
       	break;
 
       case DYN_DATA_LEN:
-         log_debug(LOG_DEBUG, "DYN_DATA_LEN: num = %d", num);
-            if (ch == '*') {
-               break;
-            } else if (isdigit(ch))  {
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_DATA_LEN: num = %d", num);
+         }
+         if (ch == '*') {
+            break;
+         } else if (isdigit(ch))  {
             num = num*10 + (ch - '0');
          } else if (ch == ' ' && isdigit(*(p-1)))  {
-            log_debug(LOG_DEBUG, "Data len: %d", num);
+            if (log_loggable(LOG_DEBUG)) {
+               log_debug(LOG_DEBUG, "Data len: %d", num);
+            }
             dmsg->mlen = num;
-            state = DYN_DATA;
+            dyn_state = DYN_DATA;
             num = 0;
          } else {
             token = NULL;
             //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
-            state = DYN_START;
+            dyn_state = DYN_START;
             if (ch == '$')
                p -= 1;
          }
          break;
 
       case DYN_DATA:
-         log_debug(LOG_DEBUG, "DYN_DATA");
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_DATA");
+         }
          if (p + dmsg->mlen < b->last) {
             dmsg->data = p;
             p += dmsg->mlen - 1;
-            state = DYN_SPACES_BEFORE_PAYLOAD_LEN;
+            dyn_state = DYN_SPACES_BEFORE_PAYLOAD_LEN;
          } else {
             //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
             goto split;
@@ -248,11 +270,13 @@ dyn_parse_core(struct msg *r)
          break;
 
       case DYN_SPACES_BEFORE_PAYLOAD_LEN:
-         log_debug(LOG_DEBUG, "DYN_SPACES_BEFORE_PAYLOAD_LEN");
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_SPACES_BEFORE_PAYLOAD_LEN");
+         }
          if (ch == ' ') {
             break;
          } else if (ch == '*') {
-            state = DYN_PAYLOAD_LEN;
+            dyn_state = DYN_PAYLOAD_LEN;
             num = 0;
          }
 
@@ -263,32 +287,30 @@ dyn_parse_core(struct msg *r)
          if (isdigit(ch))  {
             num = num*10 + (ch - '0');
          } else if (ch == CR)  {
-            log_debug(LOG_DEBUG, "Payload len: %d", num);
+            if (log_loggable(LOG_DEBUG)) {
+               log_debug(LOG_DEBUG, "Payload len: %d", num);
+            }
             dmsg->plen = num;
             num = 0;
-            if (p + dmsg->plen + 1 >= b->last) {
-               //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
-               goto split;
-            }
-            state = DYN_CRLF_BEFORE_DONE;
+            dyn_state = DYN_CRLF_BEFORE_DONE;
          } else {
             token = NULL;
-            //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
-            state = DYN_START;
+            dyn_state = DYN_START;
             if (ch == '$')
                p -= 1;
          }
          break;
 
       case DYN_CRLF_BEFORE_DONE:
-         log_debug(LOG_DEBUG, "DYN_CRLF_BEFORE_DONE");
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_CRLF_BEFORE_DONE");
+         }
          if (*p == LF) {
-            state = DYN_DONE;
+            dyn_state = DYN_DONE;
             r->pos = p;
          } else {
             token = NULL;
-            //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
-            state = DYN_START;
+            dyn_state = DYN_START;
             if (ch == '$')
                p -= 1;
          }
@@ -296,7 +318,9 @@ dyn_parse_core(struct msg *r)
          break;
 
       case DYN_DONE:
-         log_debug(LOG_DEBUG, "DYN_DONE");
+         if (log_loggable(LOG_DEBUG)) {
+            log_debug(LOG_DEBUG, "DYN_DONE");
+         }
          r->pos = p;
          dmsg->payload = p;
          r->dyn_state = DYN_DONE;
@@ -312,64 +336,112 @@ dyn_parse_core(struct msg *r)
 
    }
 
-   log_debug(LOG_DEBUG, "Not fully parsed yet!!!!!!");
+   if (log_loggable(LOG_DEBUG)) {
+      log_debug(LOG_DEBUG, "Not fully parsed yet!!!!!!");
+   }
    split:
+   //this is an attempt recovery when we got a bad message
+   //we try to look for the start the next good one and throw away the bad part
+   if (r->dyn_state == DYN_START) {
+      r->result = MSG_PARSE_AGAIN;
+       if (b->last == b->end) {
+          struct mbuf *nbuf = mbuf_get();
+          if (nbuf == NULL) {
+             loga("Unable to obtain a new mbuf for replacement!");
+             mbuf_put(b);
+             nbuf = mbuf_get();
+             mbuf_insert_head(&r->mhdr, nbuf);
+             r->pos = nbuf->pos;
+             return false;
+         }
+
+         //replacing the bad mbuf with a new and empty mbuf
+         mbuf_insert(&r->mhdr, nbuf);
+         mbuf_remove(&r->mhdr, b);
+         mbuf_put(b);
+         r->pos = nbuf->pos;
+         return false;
+       } else { //split it and throw away the bad portion
+           struct mbuf *nbuf;
+
+           nbuf = mbuf_split(&r->mhdr, r->pos, NULL, NULL);
+          if (nbuf == NULL) {
+               return DN_ENOMEM;
+          }
+          mbuf_insert(&r->mhdr, nbuf);
+          mbuf_remove(&r->mhdr, b);
+          r->pos = nbuf->pos;
+          return false;
+       }
+
+   }
+
    if (mbuf_length(b) == 0 || b->last == b->end) {
-      log_debug(LOG_DEBUG, "Would this case ever happen?");
+      if (log_loggable(LOG_DEBUG)) {
+          log_debug(LOG_DEBUG, "Would this case ever happen?");
+      }
       r->result = MSG_PARSE_AGAIN;
       return false;
    }
 
    if (r->pos == b->last) {
-            log_debug(LOG_DEBUG, "Forward to reading the new block of data");
-            r->dyn_state = DYN_START;
-            r->result = MSG_PARSE_AGAIN;
-            token = NULL;
-            return false;
+       if (log_loggable(LOG_DEBUG)) {
+           log_debug(LOG_DEBUG, "Forward to reading the new block of data");
+       }
+       r->dyn_state = DYN_START;
+       r->result = MSG_PARSE_AGAIN;
+       token = NULL;
+       return false;
    }
 
-   log_debug(LOG_VVERB, "in split");
+   if (log_loggable(LOG_VVERB)) {
+      log_debug(LOG_VVERB, "in split");
+   }
    r->dyn_state = DYN_START;
    r->pos = token;
    r->result = MSG_PARSE_REPAIR;
-   log_hexdump(LOG_VVERB, b->pos, mbuf_length(b), "split and inspecting req %"PRIu64" "
-         "res %d type %d state %d", r->id, r->result, r->type,
-         r->dyn_state);
+   if (log_loggable(LOG_VVERB)) {
+      log_hexdump(LOG_VVERB, b->pos, mbuf_length(b), "split and inspecting req %"PRIu64" "
+            "res %d type %d state %d", r->id, r->result, r->type,
+            r->dyn_state);
 
-   log_hexdump(LOG_VVERB, b->start, b->last - b->start, "split and inspecting full req %"PRIu64" "
-         "res %d type %d state %d", r->id, r->result, r->type,
-         r->dyn_state);
+      log_hexdump(LOG_VVERB, b->start, b->last - b->start, "split and inspecting full req %"PRIu64" "
+            "res %d type %d state %d", r->id, r->result, r->type,
+            r->dyn_state);
+   }
    return false;
 
    done:
-   r->dyn_state = DYN_START;
    r->pos = p;
    dmsg->source_address = r->owner->addr;
 
-   log_debug(LOG_VVERB, "at done with p at %d", p);
-   log_hexdump(LOG_VVERB, r->pos, b->last - r->pos, "done and inspecting req %"PRIu64" "
-         "res %d type %d state %d", r->id, r->result, r->type,
-         r->dyn_state);
-   log_hexdump(LOG_VVERB, b->start, b->last - b->start, "inspecting req %"PRIu64" "
-         "res %d type %d state %d", r->id, r->result, r->type,
-         r->dyn_state);
+   if (log_loggable(LOG_VVERB)) {
+      log_debug(LOG_VVERB, "at done with p at %d", p);
+      log_hexdump(LOG_VVERB, r->pos, b->last - r->pos, "done and inspecting req %"PRIu64" "
+            "res %d type %d state %d", r->id, r->result, r->type,
+            r->dyn_state);
+      log_hexdump(LOG_VVERB, b->start, b->last - b->start, "inspecting req %"PRIu64" "
+            "res %d type %d state %d", r->id, r->result, r->type,
+            r->dyn_state);
+   }
 
    return true;
 
    error:
-   log_debug(LOG_ERR, "at error for state %d and c %c", state, *p);
-   //loga("char is '%c %c %c %c'", *(p-2), *(p-1), ch, *(p+1));
+   log_debug(LOG_ERR, "at error for state %d and c %c", dyn_state, *p);
    r->result = MSG_PARSE_ERROR;
    r->pos = p;
    errno = EINVAL;
 
-   log_hexdump(LOG_ERR, b->pos, mbuf_length(b), "parsed bad req %"PRIu64" "
-         "res %d type %d state %d", r->id, r->result, r->type,
-         state);
-   log_hexdump(LOG_ERR, p, b->last - p, "inspecting req %"PRIu64" "
-         "res %d type %d state %d", r->id, r->result, r->type,
-         state);
-   r->dyn_state = state;
+   if (log_loggable(LOG_ERR)) {
+      log_hexdump(LOG_ERR, b->pos, mbuf_length(b), "parsed bad req %"PRIu64" "
+            "res %d type %d state %d", r->id, r->result, r->type,
+            dyn_state);
+      log_hexdump(LOG_ERR, p, b->last - p, "inspecting req %"PRIu64" "
+            "res %d type %d state %d", r->id, r->result, r->type,
+            dyn_state);
+   }
+   r->dyn_state = dyn_state;
 
    return false;
 }
@@ -378,139 +450,186 @@ dyn_parse_core(struct msg *r)
 void
 dyn_parse_req(struct msg *r)
 {
-   if (get_tracking_level() >= LOG_VVERB) {
-      log_debug(LOG_NOTICE, "In dyn_parse_req, start to process request :::::::::::::::::::::: ");
-      msg_dump(r);
-   }
+	if (log_loggable(LOG_VVERB)) {
+		log_debug(LOG_VVERB, ":::::::::::::::::::::: In dyn_parse_req, start to process request :::::::::::::::::::::: ");
+		msg_dump(r);
+	}
 
-   bool done_parsing = false;
-   struct mbuf *b = STAILQ_LAST(&r->mhdr, mbuf, next);
+	bool done_parsing = false;
+	struct mbuf *b = STAILQ_LAST(&r->mhdr, mbuf, next);
 
-   if (dyn_parse_core(r)) {
-      struct dmsg *dmsg = r->dmsg;
+	if (dyn_parse_core(r)) {
+		struct dmsg *dmsg = r->dmsg;
+		struct conn *conn = r->owner;
+		conn->same_dc = dmsg->same_dc;
 
-      if (dmsg->type != DMSG_UNKNOWN && dmsg->type != DMSG_REQ &&
-      	dmsg->type != DMSG_REQ_FORWARD && dmsg->type != GOSSIP_SYN) {
-         r->state = 0;
-         r->result = MSG_PARSE_OK;
-         r->dyn_state = DYN_DONE;
-         return;
-      }
+		if (dmsg->type != DMSG_UNKNOWN && dmsg->type != DMSG_REQ &&
+				dmsg->type != DMSG_REQ_FORWARD && dmsg->type != GOSSIP_SYN) {
+			r->state = 0;
+			r->result = MSG_PARSE_OK;
+			r->dyn_state = DYN_DONE;
+			return;
+		}
 
-      if (dmsg->type == GOSSIP_SYN) {
-         //TODOs: need to address multi-buffer msg later
-         dmsg->payload = b->pos;
+		if (r->dyn_state == DYN_DONE && dmsg->bit_field == 1) {
+			dmsg->owner->owner->dnode_secured = 1;
+			r->owner->dnode_crypto_state = 1;
+			r->dyn_state = DYN_POST_DONE;
+			r->result = MSG_PARSE_REPAIR;
 
-         b->pos = b->pos + dmsg->plen;
-         r->pos = b->pos;
+			if (dmsg->mlen > 1) {
+				//Decrypt AES key
+				dyn_rsa_decrypt(dmsg->data, aes_decrypted_buf);
+				strncpy(r->owner->aes_key, aes_decrypted_buf, strlen(aes_decrypted_buf));
+			}
 
-         done_parsing = true;
-      }
+			if (dmsg->plen + b->pos <= b->last) {
+				struct mbuf *decrypted_buf = mbuf_get();
+				if (decrypted_buf == NULL) {
+					loga("Unable to obtain an mbuf for dnode msg's header!");
+					r->result = MSG_OOM_ERROR;
+					return;
+				}
 
-      struct conn *conn = r->owner;
-      conn->same_dc = dmsg->same_dc;
+				dyn_aes_decrypt(b->pos, dmsg->plen, decrypted_buf, r->owner->aes_key);
 
-      //check whether we need to decrypt the payload
-      if (dmsg->bit_field == 1) {
-         dmsg->owner->owner->dnode_secured = 1;
-         r->owner->dnode_crypto_state = 1;
+				b->pos = b->pos + dmsg->plen;
+				r->pos = decrypted_buf->start;
+				mbuf_copy(decrypted_buf, b->pos, mbuf_length(b));
 
-         if (dmsg->mlen > 1) {
-            //Decrypt AES key
-            dyn_rsa_decrypt(dmsg->data, aes_decrypted_buf);
-            strncpy(r->owner->aes_key, aes_decrypted_buf, strlen(aes_decrypted_buf));
-         }
+				mbuf_insert(&r->mhdr, decrypted_buf);
+				mbuf_remove(&r->mhdr, b);
+				mbuf_put(b);
 
-         struct mbuf *decrypted_buf = mbuf_get();
-         if (decrypted_buf == NULL) {
-            loga("Unable to obtain an mbuf for dnode msg's header!");
-            return;
-         }
+				r->mlen = mbuf_length(decrypted_buf);
 
-         //Decrypt payload
-         dyn_aes_decrypt(dmsg->payload, dmsg->plen, decrypted_buf, r->owner->aes_key);
+				data_store_parse_req(r);
 
-         b->pos = b->pos + dmsg->plen;
-         r->pos = decrypted_buf->start;
-         mbuf_copy(decrypted_buf, b->pos, mbuf_length(b));
-         mbuf_insert(&r->mhdr, decrypted_buf);
-         mbuf_remove(&r->mhdr, b);
-         mbuf_put(b);
+			}
 
-         r->mlen = mbuf_length(decrypted_buf);
-      }
+			//substract alraedy received bytes
+			dmsg->plen -= b->last - b->pos;
 
-      if (done_parsing)
-         return;
+			return;
+		} else if (r->dyn_state == DYN_POST_DONE) {
+			struct mbuf *last_buf = STAILQ_LAST(&r->mhdr, mbuf, next);
+			if (last_buf->read_flip == 1) {
+				data_store_parse_req(r);
+			} else {
+				r->result = MSG_PARSE_AGAIN;
+			}
+			return;
+		}
 
-      if (r->redis) {
-         return redis_parse_req(r);
-      }
+		if (dmsg->type == GOSSIP_SYN) {
+			//TODOs: need to address multi-buffer msg later
+			dmsg->payload = b->pos;
 
-      return memcache_parse_req(r);
-   }
+			b->pos = b->pos + dmsg->plen;
+			r->pos = b->pos;
 
+			done_parsing = true;
+		}
 
-   //bad case
-   if (get_tracking_level() >= LOG_VVERB) {
-      log_debug(LOG_NOTICE, "Bad or splitted message");  //fix me to do something
-      msg_dump(r);
-   }
+		if (done_parsing)
+			return;
+
+		return data_store_parse_req(r);
+	}
+
+	//bad case
+	if (log_loggable(LOG_VVERB)) {
+		log_debug(LOG_VVERB, "Bad or splitted message");  //fix me to do something
+		msg_dump(r);
+	}
+	r->result = MSG_PARSE_AGAIN;
 }
 
 
 void dyn_parse_rsp(struct msg *r)
 {
-   if (get_tracking_level() >= LOG_VVERB) {
-      log_debug(LOG_NOTICE, "In dyn_parse_rsp, start to process response :::::::::::::::::::::::: ");
-      msg_dump(r);
-   }
+	if (log_loggable(LOG_VVERB)) {
+		log_debug(LOG_VVERB, ":::::::::::::::::::::: In dyn_parse_rsp, start to process response :::::::::::::::::::::::: ");
+		msg_dump(r);
+	}
 
-   if (dyn_parse_core(r)) {
-      struct dmsg *dmsg = r->dmsg;
-      struct mbuf *b = STAILQ_LAST(&r->mhdr, mbuf, next);
+	bool done_parsing = false;
+	struct mbuf *b = STAILQ_LAST(&r->mhdr, mbuf, next);
+	if (dyn_parse_core(r)) {
+		struct dmsg *dmsg = r->dmsg;
+		struct conn *conn = r->owner;
+		conn->same_dc = dmsg->same_dc;
 
-      if (dmsg->type != DMSG_UNKNOWN && dmsg->type != DMSG_RES) {
-         log_debug(LOG_DEBUG, "Resp parser: I got a dnode msg of type %d", dmsg->type);
-         r->state = 0;
-         r->result = MSG_PARSE_OK;
-         r->dyn_state = DYN_DONE;
-         return;
-      }
+		if (dmsg->type != DMSG_UNKNOWN && dmsg->type != DMSG_RES) {
+			log_debug(LOG_DEBUG, "Resp parser: I got a dnode msg of type %d", dmsg->type);
+			r->state = 0;
+			r->result = MSG_PARSE_OK;
+			r->dyn_state = DYN_DONE;
+			return;
+		}
 
-      //check whether we need to decrypt the payload
-      if (dmsg->bit_field == 1) {
-         //dmsg->owner->owner->dnode_secured = 1;
-         struct mbuf *decrypted_buf = mbuf_get();
-         if (decrypted_buf == NULL) {
-            log_debug(LOG_INFO, "Unable to obtain an mbuf for dnode msg's header!");
-            return;
-         }
+		if (r->dyn_state == DYN_DONE && dmsg->bit_field == 1) {
+			dmsg->owner->owner->dnode_secured = 1;
+			r->owner->dnode_crypto_state = 1;
+			r->dyn_state = DYN_POST_DONE;
+			r->result = MSG_PARSE_REPAIR;
 
-         //Dont need to decrypt AES key - pull it out from the conn
-         dyn_aes_decrypt(dmsg->payload, dmsg->plen, decrypted_buf, r->owner->aes_key);
+			if (dmsg->mlen > 1) {
+				//Decrypt AES key
+				dyn_rsa_decrypt(dmsg->data, aes_decrypted_buf);
+				strncpy(r->owner->aes_key, aes_decrypted_buf, strlen(aes_decrypted_buf));
+			}
 
-         b->pos = b->pos + dmsg->plen;
-         r->pos = decrypted_buf->start;
-         mbuf_copy(decrypted_buf, b->pos, mbuf_length(b));
-         mbuf_insert(&r->mhdr, decrypted_buf);
-         mbuf_remove(&r->mhdr, b);
-         mbuf_put(b);
-         r->mlen = mbuf_length(decrypted_buf);
-      }
+			if (dmsg->plen + b->pos <= b->last) {
+				struct mbuf *decrypted_buf = mbuf_get();
+				if (decrypted_buf == NULL) {
+					loga("Unable to obtain an mbuf for dnode msg's header!");
+					r->result = MSG_OOM_ERROR;
+					return;
+				}
 
-      if (r->redis) {
-         return redis_parse_rsp(r);
-      }
+				dyn_aes_decrypt(b->pos, dmsg->plen, decrypted_buf, r->owner->aes_key);
 
-      return memcache_parse_rsp(r);
-   }
+				b->pos = b->pos + dmsg->plen;
+				r->pos = decrypted_buf->start;
+				mbuf_copy(decrypted_buf, b->pos, mbuf_length(b));
 
-   //bad case
-   if (get_tracking_level() >= LOG_VVERB) {
-      log_debug(LOG_DEBUG, "Resp: bad message - cannot parse");  //fix me to do something
-      msg_dump(r);
-   }
+				mbuf_insert(&r->mhdr, decrypted_buf);
+				mbuf_remove(&r->mhdr, b);
+				mbuf_put(b);
+
+				r->mlen = mbuf_length(decrypted_buf);
+
+				return data_store_parse_rsp(r);
+			}
+
+			//Subtract already received bytes
+			dmsg->plen -= b->last - b->pos;
+			return;
+
+		} else if (r->dyn_state == DYN_POST_DONE) {
+			struct mbuf *last_buf = STAILQ_LAST(&r->mhdr, mbuf, next);
+			if (last_buf->read_flip == 1) {
+				data_store_parse_rsp(r);
+			} else {
+				r->result = MSG_PARSE_AGAIN;
+			}
+			return;
+		}
+
+		if (done_parsing)
+			return;
+
+		return data_store_parse_rsp(r);
+	}
+
+	//bad case
+	if (log_loggable(LOG_DEBUG)) {
+		log_debug(LOG_DEBUG, "Resp: bad message - cannot parse");  //fix me to do something
+		msg_dump(r);
+	}
+
+	r->result = MSG_PARSE_AGAIN;
 
 }
 
@@ -519,7 +638,6 @@ void
 dmsg_free(struct dmsg *dmsg)
 {
     log_debug(LOG_VVVERB, "free dmsg %p id %"PRIu64"", dmsg, dmsg->id);
-
     dn_free(dmsg);
 }
 
@@ -527,8 +645,9 @@ dmsg_free(struct dmsg *dmsg)
 void
 dmsg_put(struct dmsg *dmsg)
 {
-    log_debug(LOG_VVVERB, "put dmsg %p id %"PRIu64"", dmsg, dmsg->id);
-
+    if (log_loggable(LOG_VVVERB)) {
+        log_debug(LOG_VVVERB, "put dmsg %p id %"PRIu64"", dmsg, dmsg->id);
+    }
     nfree_dmsgq++;
     TAILQ_INSERT_HEAD(&free_dmsgq, dmsg, m_tqe);
 }
@@ -536,8 +655,6 @@ dmsg_put(struct dmsg *dmsg)
 void
 dmsg_dump(struct dmsg *dmsg)
 {
-    struct mbuf *mbuf;
-
     log_debug(LOG_VVVERB, "dmsg dump: id %"PRIu64" version %d  bit_field %d type %d len %"PRIu32"  plen %"PRIu32" ",
                  dmsg->id, dmsg->version, dmsg->bit_field, dmsg->type, dmsg->mlen, dmsg->plen);
 }
@@ -608,6 +725,8 @@ done:
     dmsg->id = 0;
     dmsg->source_address = NULL;
     dmsg->owner = NULL;
+    dmsg->bit_field = 0;
+    dmsg->same_dc = 1;
  
     return dmsg;
 }
@@ -641,9 +760,9 @@ dmsg_write(struct mbuf *mbuf, uint64_t msg_id, uint8_t type,
     //same-dc
     mbuf_write_char(mbuf, ' ');
     if (conn->same_dc)
-   	 mbuf_write_uint8(mbuf, 1);
+        mbuf_write_uint8(mbuf, 1);
     else
-   	 mbuf_write_uint8(mbuf, 0);
+        mbuf_write_uint8(mbuf, 0);
 
     //data
     mbuf_write_char(mbuf, ' ');
@@ -700,9 +819,9 @@ dmsg_write_mbuf(struct mbuf *mbuf, uint64_t msg_id, uint8_t type, struct conn *c
     //same-dc
     mbuf_write_char(mbuf, ' ');
     if (conn->same_dc)
-   	 mbuf_write_uint8(mbuf, 1);
+        mbuf_write_uint8(mbuf, 1);
     else
-   	 mbuf_write_uint8(mbuf, 0);
+        mbuf_write_uint8(mbuf, 0);
 
     //mbuf_write_string(mbuf, &CRLF_STR);
     mbuf_write_char(mbuf, ' ');
@@ -965,4 +1084,40 @@ dmsg_process(struct context *ctx, struct conn *conn, struct dmsg *dmsg)
     return false;
 }
 
+/*
+ *
+ */
 
+void
+data_store_parse_req(struct msg *r)
+{
+	if (r->data_store == DATA_REDIS) {
+		return redis_parse_req(r);
+	}
+	else if (r->data_store == DATA_MEMCACHE){
+		return memcache_parse_req(r);
+	}
+	else{
+		//if (log_loggable(LOG_VVERB)) {
+			//	log_hexdump(LOG_VVERB,"incorrect selection of data store %d (parse request)", data_store);
+		//}
+		exit(0);
+	}
+}
+
+void
+data_store_parse_rsp(struct msg *r)
+{
+	if (r->data_store == DATA_REDIS) {
+		return redis_parse_rsp(r);
+	}
+	else if (r->data_store == DATA_MEMCACHE){
+		return memcache_parse_rsp(r);
+	}
+	else{
+		//if (log_loggable(LOG_VVERB)) {
+			//	log_hexdump(LOG_VVERB,"incorrect selection of data store %d (parse request)", data_store);
+		//}
+		exit(0);
+	}
+}
