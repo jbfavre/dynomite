@@ -1,19 +1,17 @@
 --- a/Makefile.am
 +++ b/Makefile.am
-@@ -2,8 +2,8 @@ MAINTAINERCLEANFILES = Makefile.in acloc
+@@ -2,7 +2,7 @@ MAINTAINERCLEANFILES = Makefile.in acloc
  
  ACLOCAL_AMFLAGS = -I m4
  
 -SUBDIRS = contrib src
 +SUBDIRS = src
  
--#dist_man_MANS = man/dynomite.8
-+dist_man_MANS = man/dynomite.8
+ dist_man_MANS = man/dynomite.8
  
- EXTRA_DIST = README.md NOTICE LICENSE ChangeLog conf scripts notes
 --- a/configure.ac
 +++ b/configure.ac
-@@ -198,15 +198,8 @@ AS_IF([test "x$disable_stats" = xyes],
+@@ -194,15 +194,8 @@ AS_IF([test "x$disable_stats" = xyes],
    [AC_DEFINE([HAVE_STATS], [1], [Define to 1 if stats is not disabled])])
  AC_MSG_RESULT($disable_stats)
  
@@ -31,32 +29,35 @@
                   src/proto/Makefile
 --- a/src/Makefile.am
 +++ b/src/Makefile.am
-@@ -8,7 +8,6 @@ AM_CPPFLAGS += -I $(top_srcdir)/src/hashkit
- AM_CPPFLAGS += -I $(top_srcdir)/src/proto
+@@ -9,7 +9,6 @@ AM_CPPFLAGS += -I $(top_srcdir)/src/prot
  AM_CPPFLAGS += -I $(top_srcdir)/src/event
+ AM_CPPFLAGS += -I $(top_srcdir)/src/entropy
  AM_CPPFLAGS += -I $(top_srcdir)/src/seedsprovider
 -AM_CPPFLAGS += -I $(top_srcdir)/contrib/yaml-0.1.4/include
  
- AM_CFLAGS =
- AM_CFLAGS += -Wall -Wshadow
+ AM_CFLAGS = -Wall -Wshadow
+ AM_CFLAGS += -Wpointer-arith
 @@ -20,6 +19,7 @@ AM_CFLAGS += -Wconversion -Wsign-compare
- AM_CFLAGS += -Wstrict-prototypes -Wmissing-prototypes -Wredundant-decls -Wmissing-declarations
+ AM_CFLAGS += -Wstrict-prototypes -Wmissing-prototypes -Wredundant-decls -Wmissing-declarations -Wimplicit-function-declaration
  
  AM_LDFLAGS =
 +AM_LDFLAGS += -lyaml
  AM_LDFLAGS += -lm -lpthread -rdynamic
  AM_LDFLAGS += -lssl -lcrypto
  
-@@ -72,7 +72,6 @@ dynomite_LDADD = $(top_builddir)/src/hashkit/libhashkit.a
- dynomite_LDADD += $(top_builddir)/src/proto/libproto.a
+@@ -75,7 +75,6 @@ dynomite_LDADD += $(top_builddir)/src/pr
  dynomite_LDADD += $(top_builddir)/src/event/libevent.a
- dynomite_LDADD +=  $(top_builddir)/src/seedsprovider/libseedsprovider.a
+ dynomite_LDADD += $(top_builddir)/src/entropy/libentropy.a
+ dynomite_LDADD +=  $(top_builddir)/src/seedsprovider/libseedsprovider.a -lresolv
 -dynomite_LDADD += $(top_builddir)/contrib/yaml-0.1.4/src/.libs/libyaml.a
  
  
  
-@@ -117,4 +116,3 @@ test_LDADD = $(top_builddir)/src/hashkit/libhashkit.a
- test_LDADD += $(top_builddir)/src/proto/libproto.a
- test_LDADD += $(top_builddir)/src/event/libevent.a
- test_LDADD +=  $(top_builddir)/src/seedsprovider/libseedsprovider.a
--test_LDADD += $(top_builddir)/contrib/yaml-0.1.4/src/.libs/libyaml.a
+@@ -124,7 +123,6 @@ dynomite_test_LDADD += $(top_builddir)/s
+ dynomite_test_LDADD += $(top_builddir)/src/event/libevent.a
+ dynomite_test_LDADD += $(top_builddir)/src/entropy/libentropy.a
+ dynomite_test_LDADD +=  $(top_builddir)/src/seedsprovider/libseedsprovider.a -lresolv
+-dynomite_test_LDADD += $(top_builddir)/contrib/yaml-0.1.4/src/.libs/libyaml.a
+ 
+ if OS_BSD
+ dynomite_SOURCES +=                                               \
