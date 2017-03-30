@@ -1,3 +1,13 @@
+dynomite (0.5.9-1) stable; urgency=medium
+
+  * Add d/watch file
+  * New upstream version 0.5.9
+  * Patch update for 0.5.9-2
+  * Lintian fixes
+  * Update build dependencies
+
+ -- Jean Baptiste Favre <debian@jbfavre.org>  Thu, 30 Mar 2017 09:57:02 +0200
+
 dynomite (0.5.5-1) stable; urgency=medium
 
   * Imported upstream version 0.5.5
