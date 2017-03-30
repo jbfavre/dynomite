@@ -1,3 +1,9 @@
+dynomite (0.5.9-1~bpo8+1) jessie-backports; urgency=medium
+
+  * Rebuild for jessie-backports.
+
+ -- Jean Baptiste Favre <debian@jbfavre.org>  Thu, 30 Mar 2017 10:57:34 +0200
+
 dynomite (0.5.9-1) stable; urgency=medium
 
   * Add d/watch file
