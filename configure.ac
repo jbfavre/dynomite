@@ -1,12 +1,14 @@
-# Define the package version numbers and the bug reporting address
-m4_define([DN_MAJOR], 0)
-m4_define([DN_MINOR], 5)
-m4_define([DN_PATCH], 5)
+# Add support for m4_esyscmd_s to autoconf-2.63 (used in RHEL/CentOS 6.7)
+m4_ifndef([m4_esyscmd_s], [m4_define([m4_chomp_all], [m4_format([[%.*s]], m4_bregexp(m4_translit([[$1]], [/], [/ ]), [/*$]), [$1])])])
+m4_ifndef([m4_esyscmd_s], [m4_define([m4_esyscmd_s], [m4_chomp_all(m4_esyscmd([$1]))])])
+
+# Define the bug reporting address and package version
 m4_define([DN_BUGS], [dynomite@netflix.com])
+m4_define([DN_VERSION_STRING], m4_esyscmd_s([git describe --dirty --always --tags]))
 
 # Initialize autoconf
 AC_PREREQ([2.63])
-AC_INIT([dynomite], [DN_MAJOR.DN_MINOR.DN_PATCH], [DN_BUGS])
+AC_INIT([dynomite], [DN_VERSION_STRING], [DN_BUGS])
 AC_CONFIG_SRCDIR([src/dynomite.c])
 AC_CONFIG_AUX_DIR([config])
 AC_CONFIG_HEADERS([config.h:config.h.in])
@@ -14,12 +16,6 @@ AC_CONFIG_MACRO_DIR([m4])
 
 # Initialize automake
 AM_INIT_AUTOMAKE([1.11 foreign])
-
-# Define macro variables for the package version numbers
-AC_DEFINE(DN_VERSION_MAJOR, DN_MAJOR, [Define the major version number])
-AC_DEFINE(DN_VERSION_MINOR, DN_MINOR, [Define the minor version number])
-AC_DEFINE(DN_VERSION_PATCH, DN_PATCH, [Define the patch version number])
-AC_DEFINE(DN_VERSION_STRING, "DN_MAJOR.DN_MINOR.DN_PATCH", [Define the version string])
 
 # Checks for language
 AC_LANG([C])
@@ -32,7 +28,7 @@ AC_PROG_CXX
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MAKE_SET
-AC_PROG_RANLIB
+LT_INIT
 AC_PROG_LIBTOOL
 
 # Checks for typedefs, structures, and compiler characteristics
@@ -210,8 +206,10 @@ AC_CONFIG_FILES([Makefile
                  src/Makefile
                  src/hashkit/Makefile
                  src/proto/Makefile
+                 src/entropy/Makefile                 
                  src/seedsprovider/Makefile
-                 src/event/Makefile])
+                 src/event/Makefile
+                 src/tools/Makefile])
 
 # Generate the "configure" script
 AC_OUTPUT

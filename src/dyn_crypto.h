@@ -27,7 +27,7 @@
 #define AES_KEYLEN 32
 
 
-rstatus_t crypto_init(struct context *ctx);
+rstatus_t crypto_init(struct server_pool *sp);
 rstatus_t crypto_init_for_test(void);
 rstatus_t crypto_deinit(void);
 
@@ -44,6 +44,7 @@ rstatus_t dyn_aes_encrypt(const unsigned char *msg, size_t msgLen,
 rstatus_t dyn_aes_decrypt(unsigned char *encMsg, size_t encMsgLen,
 		                  struct mbuf *mbuf, unsigned char *aes_key);
 
+rstatus_t dyn_aes_encrypt_msg(struct msg *msg, unsigned char *aes_key);
 unsigned char* generate_aes_key(void);
 
 int dyn_rsa_size(void);

@@ -27,7 +27,7 @@
 #include <dyn_dnode_peer.h>
 #include <dyn_core.h>
 #include <dyn_server.h>
-#include <dyn_hashkit.h>
+#include <dyn_vnode.h>
 
 static int
 vnode_item_cmp(const void *t1, const void *t2)
@@ -37,7 +37,7 @@ vnode_item_cmp(const void *t1, const void *t2)
     return cmp_dyn_token(ct1->token, ct2->token);
 }
 
-rstatus_t
+static rstatus_t
 vnode_rack_verify_continuum(void *elem, void *data)
 {
     struct rack *rack = elem;
@@ -62,7 +62,7 @@ vnode_update(struct server_pool *sp)
 
     int i, len;
     for (i = 0, len = array_n(&sp->peers); i < len; i++) {
-        struct server *peer = array_get(&sp->peers, i);
+        struct node *peer = array_get(&sp->peers, i);
 
         log_debug(LOG_VERB, "peer name       : '%.*s'", peer->name.len, peer->name.data);
         log_debug(LOG_VERB, "peer rack       : '%.*s'", peer->rack.len, peer->rack.data);

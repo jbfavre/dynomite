@@ -88,6 +88,7 @@
 int dn_set_blocking(int sd);
 int dn_set_nonblocking(int sd);
 int dn_set_reuseaddr(int sd);
+int dn_set_keepalive(int sd, int val);
 int dn_set_tcpnodelay(int sd);
 int dn_set_linger(int sd, int timeout);
 int dn_set_sndbuf(int sd, int size);
@@ -349,8 +350,8 @@ void dn_stacktrace(int skip_count);
 
 int _scnprintf(char *buf, size_t size, const char *fmt, ...);
 int _vscnprintf(char *buf, size_t size, const char *fmt, va_list args);
-int64_t dn_usec_now(void);
-int64_t dn_msec_now(void);
+usec_t dn_usec_now(void);
+msec_t dn_msec_now(void);
 
 /*
  * Address resolution for internet (ipv4 and ipv6) and unix domain
@@ -371,11 +372,6 @@ int dn_resolve(struct string *name, int port, struct sockinfo *si);
 char *dn_unresolve_addr(struct sockaddr *addr, socklen_t addrlen);
 char *dn_unresolve_peer_desc(int sd);
 char *dn_unresolve_desc(int sd);
-
-unsigned int dict_node_hash(const void *key);
-int dict_node_key_compare(void *privdata, const void *key1, const void *key2);
-void dict_node_destructor(void *privdata, void *val);
-
 
 unsigned int dict_string_hash(const void *key);
 int dict_string_key_compare(void *privdata, const void *key1, const void *key2);
