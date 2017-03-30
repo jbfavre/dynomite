@@ -80,6 +80,12 @@ dn_set_reuseaddr(int sd)
     return setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &reuse, len);
 }
 
+int
+dn_set_keepalive(int sd, int val)
+{
+    return setsockopt(sd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val));
+}
+
 /*
  * Disable Nagle algorithm on TCP socket.
  *
@@ -318,6 +324,12 @@ dn_stacktrace(int skip_count)
 
     for (i = skip_count, j = 0; i < size; i++, j++) {
         loga("[%d] %s", j, symbols[i]);
+
+        char syscom[256];
+        snprintf(syscom, sizeof(syscom), "addr2line %p -e /proc/%d/exe >&2", stack[i], getpid());
+        if (system(syscom) < 0) {
+            loga("system command did not succeed to print filename");
+        }
     }
 
     free(symbols);
@@ -440,20 +452,20 @@ _dn_recvn(int sd, void *vptr, size_t n)
 /*
  * Return the current time in microseconds since Epoch
  */
-int64_t
+usec_t
 dn_usec_now(void)
 {
     struct timeval now;
-    int64_t usec;
+    uint64_t usec;
     int status;
 
     status = gettimeofday(&now, NULL);
     if (status < 0) {
         log_error("gettimeofday failed: %s", strerror(errno));
-        return -1;
+        return 0;
     }
 
-    usec = (int64_t)now.tv_sec * 1000000LL + (int64_t)now.tv_usec;
+    usec = (uint64_t)now.tv_sec * 1000000ULL + (uint64_t)now.tv_usec;
 
     return usec;
 }
@@ -461,10 +473,10 @@ dn_usec_now(void)
 /*
  * Return the current time in milliseconds since Epoch
  */
-int64_t
+msec_t
 dn_msec_now(void)
 {
-    return dn_usec_now() / 1000LL;
+    return dn_usec_now() / 1000ULL;
 }
 
 static int
@@ -647,68 +659,4 @@ dn_unresolve_desc(int sd)
 
     return dn_unresolve_addr(addr, addrlen);
 }
-
-
-unsigned int dict_node_hash(const void *key) {
-    struct node *node = key;
-    if (node == NULL)
-       return 0;
-    return dictGenHashFunction((unsigned char*)node->dc.data, node->dc.len) +
-    		dictGenHashFunction((unsigned char*)node->rack.data, node->rack.len) +
-    		node->token.mag[0];
-}
-
-
-int dict_node_key_compare(void *privdata, const void *key1, const void *key2)
-{
-    DICT_NOTUSED(privdata);
-    struct node *node1 = key1;
-    struct node *node2 = key2;
-
-    ASSERT(node1 == NULL || node2 == NULL);
-
-    return (string_compare(&node1->dc, &node2->dc) == 0) &&
-    	   (string_compare(&node1->rack, &node2->rack) == 0) &&
-    	   (cmp_dyn_token(&node1->token, &node2->token) == 0);
-
-}
-
-void dict_node_destructor(void *privdata, void *val)
-{
-    DICT_NOTUSED(privdata);
-
-    struct node *node = val;
-    node_deinit(node);
-    dn_free(node);
-}
-
-
-unsigned int dict_string_hash(const void *key) {
-	struct string *s = key;
-	//return dictGenHashFunction((unsigned char*)key, dn_strlen((char*)key));
-	if (s == NULL)
-		return 0;
-	return dictGenHashFunction(s->data, s->len);
-}
-
-
-int dict_string_key_compare(void *privdata, const void *key1, const void *key2)
-{
-    DICT_NOTUSED(privdata);
-    struct string *s1 = key1;
-    struct string *s2 = key2;
-
-    //return (s1->len != s2->len)? 0 : strncmp(s1->data, s2->data, s1->len) == 0;
-    return string_compare(s1, s2) == 0;
-}
-
-void dict_string_destructor(void *privdata, void *val)
-{
-    DICT_NOTUSED(privdata);
-
-    struct string *s = val;
-    string_deinit(s);
-    dn_free(s);
-}
-
 
