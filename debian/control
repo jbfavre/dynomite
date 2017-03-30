@@ -2,12 +2,17 @@ Source: dynomite
 Section: misc
 Priority: optional
 Maintainer: Jean Baptiste Favre <debian@jbfavre.org>
-Build-Depends: debhelper (>= 7), dh-autoreconf, libyaml-dev, libssl-dev
-Standards-Version: 3.9.6
+Build-Depends: debhelper (>= 9), dh-autoreconf,
+               libyaml-dev,
+               libssl1.0-dev
+Standards-Version: 3.9.8
+Homepage: https://github.com/netflix/dynomite
+Vcs-Git: https://github.com/jbfavre/dynomite.git
+Vcs-Browser: https://github.com/jbfavre/dynomite/
 
 Package: dynomite
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends},lsb-base (>= 3.2-14)
 Description: thin and distributed dynamo storage layer.
  Dynomite, inspired by Dynamo whitepaper, is a thin, distributed
  dynamo layer for different storages and protocols.
